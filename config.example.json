@@ -1,0 +1,40 @@
+{
+  "database_path": "./data/guard.sqlite3",
+  "delete_mode": "dry_run",
+  "auto_delete_duplicates": false,
+  "auto_delete_policy_violations": false,
+  "hide_recall_tip": false,
+  "channel_sections": {},
+  "official_author_ids": [],
+  "section_hashtags": {
+    "featured": ["精华"],
+    "weekly_question": ["每周一问", "一周一问", "周问"],
+    "practical_article": ["实用文章", "案例分享", "实战", "教程"],
+    "qa_discussion": ["问答与交流", "问答", "交流", "求助", "讨论"],
+    "official_news": ["官方资讯", "官方公告"]
+  },
+  "rules": {
+    "weekly_phrase_keywords": ["每周一问", "本周问题", "本周一问"],
+    "question_keywords": ["请问", "如何", "怎么", "为什么", "求助", "大家觉得", "讨论一下", "交流一下"],
+    "practical_keywords": ["案例", "教程", "步骤", "实战", "指南", "经验", "复盘", "解决方案", "技巧", "最佳实践"],
+    "min_practical_text_length": 100,
+    "min_featured_text_length": 220,
+    "weekly_requires_any_hashtag": true
+  },
+  "board_policies": {},
+  "moderation": {
+    "enabled": true,
+    "policy_version": "2026-08-19.1",
+    "review_threshold": 25,
+    "delete_candidate_threshold": 80,
+    "min_meaningful_length": 4,
+    "detect_contact_information": true,
+    "detect_external_links": true,
+    "detect_obfuscated_terms": true,
+    "terms": [
+      {"term": "需要审核的中文词", "language": "zh", "category": "custom", "severity": "medium", "action": "review"},
+      {"term": "blockedword", "language": "en", "category": "custom", "severity": "high", "action": "delete_candidate", "match_type": "word"}
+    ]
+  },
+  "tencent_channels": []
+}
