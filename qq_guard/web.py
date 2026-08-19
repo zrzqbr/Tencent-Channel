@@ -48,6 +48,30 @@ STATUS_LABELS = {
     "not_required": "无需审核",
     "superseded": "已被新策略替代",
 }
+AI_STATUS_LABELS = {
+    "completed": "已完成",
+    "completed_text_only": "文字已完成，图片降级",
+    "cached": "已完成（缓存）",
+    "cached_text_only": "文字已完成（缓存），图片降级",
+    "fallback": "已安全降级",
+    "disabled": "未启用",
+    "not_requested": "未请求",
+    "failed": "执行失败",
+}
+AI_PUBLIC_STATUS_LABELS = {
+    "ready": "已连接，可执行",
+    "missing_key": "等待配置 API 密钥",
+    "disabled": "未启用",
+}
+VISION_STATUS_LABELS = {
+    "ready": "已连接，有图片时执行",
+    "completed": "已完成",
+    "cached": "已完成（缓存）",
+    "not_requested": "未请求",
+    "failed": "执行失败，已转人工",
+    "missing_key": "等待配置 API 密钥",
+    "disabled": "未启用",
+}
 
 
 class LoginLimiter:
@@ -157,6 +181,9 @@ def create_app(
             "risk_labels": RISK_LABELS,
             "action_labels": ACTION_LABELS,
             "status_labels": STATUS_LABELS,
+            "ai_status_labels": AI_STATUS_LABELS,
+            "ai_public_status_labels": AI_PUBLIC_STATUS_LABELS,
+            "vision_status_labels": VISION_STATUS_LABELS,
             "manual_delete_enabled": os.environ.get(
                 "QQ_GUARD_MANUAL_DELETE_ENABLED", "false"
             ).casefold()

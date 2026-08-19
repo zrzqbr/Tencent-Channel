@@ -6,6 +6,7 @@
   <meta name="robots" content="noindex, nofollow">
   <title>{% block title %}腾讯频道内容治理后台{% endblock %}</title>
   <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='workflow.css') }}">
 </head>
 <body>
   <div class="app-shell">
@@ -14,14 +15,37 @@
         <span class="brand-mark">T</span>
         <span><strong>腾讯频道治理</strong><small>Content Guard</small></span>
       </a>
-      <nav>
-        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">总览</a>
-        <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete'] }}" href="{{ url_for('reviews') }}">审核队列</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'duplicates' }}" href="{{ url_for('duplicates') }}">去重记录</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'rules' }}" href="{{ url_for('rules') }}">AI 审核策略</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'channels' }}" href="{{ url_for('channels') }}">频道与版块</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'test_content' }}" href="{{ url_for('test_content') }}">内容测试</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'audit' }}" href="{{ url_for('audit') }}">操作审计</a>
+      <nav aria-label="主要导航">
+        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">
+          <span>工作台</span><small>流程状态与今日待办</small>
+        </a>
+        <div class="nav-group">
+          <p>审核工作流</p>
+          <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete'] }}" href="{{ url_for('reviews') }}">
+            <span>审核结果与审批</span><small>规则、VITA、Hy3 与终审</small>
+          </a>
+          <a class="nav-link {{ 'active' if request.endpoint == 'duplicates' }}" href="{{ url_for('duplicates') }}">
+            <span>严格去重</span><small>连续完全相同内容</small>
+          </a>
+        </div>
+        <div class="nav-group">
+          <p>治理配置</p>
+          <a class="nav-link {{ 'active' if request.endpoint == 'channels' }}" href="{{ url_for('channels') }}">
+            <span>频道与栏目</span><small>栏目定位与发布要求</small>
+          </a>
+          <a class="nav-link {{ 'active' if request.endpoint == 'rules' }}" href="{{ url_for('rules') }}">
+            <span>AI 与规则策略</span><small>模型、阈值和敏感词</small>
+          </a>
+          <a class="nav-link {{ 'active' if request.endpoint == 'test_content' }}" href="{{ url_for('test_content') }}">
+            <span>模拟检测</span><small>上线前验证判定</small>
+          </a>
+        </div>
+        <div class="nav-group">
+          <p>记录</p>
+          <a class="nav-link {{ 'active' if request.endpoint == 'audit' }}" href="{{ url_for('audit') }}">
+            <span>处置与审计</span><small>审批、删除与运行记录</small>
+          </a>
+        </div>
       </nav>
       <div class="safety-card">
         <span class="status-dot"></span>
@@ -33,9 +57,10 @@
         <button class="ghost-button full" type="submit">退出登录</button>
       </form>
     </aside>
+    <button class="sidebar-backdrop" type="button" data-sidebar-toggle aria-label="关闭菜单"></button>
     <main class="main-panel">
       <header class="topbar">
-        <button class="menu-button" type="button" data-sidebar-toggle aria-label="打开菜单">☰</button>
+        <button class="menu-button" type="button" data-sidebar-toggle aria-label="打开菜单">菜单</button>
         <div>
           <p class="eyebrow">tencent.ruitcarch.cloud</p>
           <h1>{% block heading %}内容治理后台{% endblock %}</h1>

@@ -159,6 +159,11 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
+        self.assertIn("完整审核流程".encode("utf-8"), response.data)
+        self.assertIn("Youtu-VITA 图片分析".encode("utf-8"), response.data)
+        self.assertIn("Hy3 综合判断".encode("utf-8"), response.data)
+        self.assertIn("管理员人工审批".encode("utf-8"), response.data)
+        self.assertIn("审核结果与审批".encode("utf-8"), response.data)
 
     def test_post_requires_csrf(self):
         self.login()
@@ -254,6 +259,16 @@ class WebTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(status, "approved")
         self.assertEqual(actions, 1)
+
+    def test_review_detail_exposes_actual_ai_execution_state(self):
+        row_id = self.insert_tencent_review()
+        self.login()
+        response = self.client.get(f"/reviews/tencent/{row_id}")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("审核执行轨迹".encode("utf-8"), response.data)
+        self.assertIn("当前为规则判定".encode("utf-8"), response.data)
+        self.assertIn("Youtu-VITA 图片分析".encode("utf-8"), response.data)
+        self.assertIn("Hy3 综合判断".encode("utf-8"), response.data)
 
     def test_delete_requires_second_confirmation_and_reauthentication(self):
         row_id = self.insert_tencent_review()

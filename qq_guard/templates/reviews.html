@@ -1,7 +1,11 @@
 {% extends "base.html" %}
-{% block title %}审核队列 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}审核队列{% endblock %}
+{% block title %}审核结果与审批 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}审核结果与审批{% endblock %}
 {% block content %}
+<section class="info-banner review-guide">
+  <strong>在这里完成最终判断</strong>
+  <p>每条内容都会标出规则、Youtu-VITA 与 Hy3 的实际执行状态；只有管理员审批后，普通内容才可进入删除确认。</p>
+</section>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
     <label>审核状态<select name="status"><option value="" {{ 'selected' if not selected_status }}>全部</option>{% for key in ['pending','approved','rejected','ignored','deleted'] %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ status_labels[key] }}</option>{% endfor %}</select></label>

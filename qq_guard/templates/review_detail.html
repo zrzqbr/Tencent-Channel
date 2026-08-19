@@ -14,6 +14,14 @@
       <div><dt>策略版本</dt><dd>{{ item.policy_version }}</dd></div><div><dt>检测时间</dt><dd>{{ item.created_at|replace('T', ' ') }}</dd></div>
       <div><dt>分析来源</dt><dd>{{ 'AI 语义审核' if item.analysis_source == 'ai' else '规则降级' }}</dd></div><div><dt>模型 / 置信度</dt><dd>{{ item.ai_model or '未调用' }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</dd></div>
     </dl>
+    <h3>审核执行轨迹</h3>
+    <div class="analysis-trace">
+      <article><span>01</span><div><strong>规则初审</strong><small>已完成 · {{ item.reasons|length }} 条可核对理由</small></div></article>
+      <article><span>02</span><div><strong>Youtu-VITA 图片分析</strong><small>{% if not item.media_urls %}本条无图片，无需执行{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</small></div></article>
+      <article><span>03</span><div><strong>Hy3 综合判断</strong><small>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}{% if item.ai_model %} · {{ item.ai_model }}{% endif %}</small></div></article>
+      <article><span>04</span><div><strong>管理员终审</strong><small>{{ status_labels.get(item.review_status, item.review_status) }}</small></div></article>
+    </div>
+    {% if item.analysis_source != 'ai' %}<div class="info-banner warning-banner"><strong>当前为规则判定，尚无可用的 Hy3 综合结论</strong><p>{{ item.ai_error or '该记录产生时 AI 未启用、未请求或尚未完成；系统不会据此自动删除普通内容。' }}</p></div>{% endif %}
     {% if item.ai_analysis.get('summary') %}<h3>Hy3 审核摘要</h3><div class="content-box">{{ item.ai_analysis.summary }}</div>{% endif %}
     {% if item.ai_analysis.get('vision_analysis') %}<h3>VITA 图片证据</h3><div class="content-box">{{ item.ai_analysis.vision_analysis }}</div>{% endif %}
     {% if item.ai_error %}<div class="info-banner"><strong>AI 已安全降级</strong><p>{{ item.ai_error }}</p></div>{% endif %}
