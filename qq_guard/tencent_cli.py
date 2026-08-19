@@ -1,8 +1,10 @@
 import json
+import os
 import shutil
 import subprocess
 import threading
 import time
+from pathlib import Path
 from typing import Any, Dict, List, Optional, Sequence
 
 
@@ -18,6 +20,7 @@ class TencentCliClient:
         executable: str = "tencent-channel-cli",
         timeout_seconds: int = 30,
         min_interval_seconds: float = 0.4,
+        credential_home: Optional[str] = None,
     ) -> None:
         resolved = shutil.which(executable)
         if not resolved:
@@ -25,6 +28,14 @@ class TencentCliClient:
         self.executable = resolved
         self.timeout_seconds = timeout_seconds
         self.min_interval_seconds = max(0.0, float(min_interval_seconds))
+        resolved_home = str(
+            credential_home or os.environ.get("QQ_GUARD_TENCENT_HOME", "")
+        ).strip()
+        if not resolved_home and Path("/srv/tencent-channel/home").is_dir():
+            resolved_home = "/srv/tencent-channel/home"
+        self.environment = os.environ.copy()
+        if resolved_home:
+            self.environment["HOME"] = resolved_home
         self._last_call = 0.0
         self._lock = threading.Lock()
 
@@ -96,6 +107,7 @@ class TencentCliClient:
                     text=True,
                     timeout=self.timeout_seconds,
                     check=False,
+                    env=self.environment,
                 )
             except subprocess.TimeoutExpired as exc:
                 if attempt < retries:
