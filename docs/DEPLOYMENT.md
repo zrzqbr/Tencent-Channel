@@ -11,16 +11,16 @@
 - DNSPod 已添加 `tencent` 的 A 记录，指向 `150.158.77.134`，TTL 为 600 秒。
 - 独立 Nginx 站点已启用；HTTP 会跳转到同一子域名的 HTTPS，不会跳转到峰会官网。
 - Let's Encrypt HTTPS 证书已签发，有效期至 2026-11-17；Certbot 自动续期定时器和模拟续期均验证成功。
-- 当前静态状态页已上线，源文件保存在 `deploy/static/index.html`，未来由受登录保护的管理后台替换。
-- 可使用 `https://tencent.ruitcarch.cloud/healthz` 检查站点状态，正常返回 `ok`。
+- 密码登录管理后台已上线，由 Gunicorn 监听 `127.0.0.1:8787`，Nginx 负责 HTTPS 和反向代理。
+- 后台服务单元为 `qq-channel-admin.service`；持续只读巡检单元为 `qq-channel-monitor.service`。
+- 可使用 `https://tencent.ruitcarch.cloud/healthz` 检查应用状态，正常返回 JSON `{"status":"ok"}`。
 - 内容审核与删除继续保持 `dry_run`，域名配置不会开启真实删帖。
 
 ## 上线前必须完成
 
-1. 将管理后台服务只监听本机端口，由 Nginx 反向代理；腾讯凭据仅保存在服务端。
-2. 上线登录、管理员与审核员权限、CSRF 防护、限流、会话过期和操作审计。
-3. 验证后台接口、登录、审核操作和回滚流程后，再开放管理功能。
-4. 真实删帖仍需单独修改 `delete_mode` 和对应自动删除开关，不与网页上线联动。
+1. 腾讯官方频道 CLI 需要在服务器服务账号下单独扫码授权，凭据只保存在服务器。
+2. 后续如增加审核员账号，应拆分管理员与审核员权限；当前仅提供单一管理员入口。
+3. 真实自动删帖仍需单独修改 `delete_mode` 和对应自动删除开关，不与网页上线联动。
 
 ## 验收标准
 

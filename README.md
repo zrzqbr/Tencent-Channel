@@ -9,7 +9,7 @@
 
 系统还包含可解释的内容审核层：中英文敏感词、联系方式、外链、低信息灌水、乱码、版块错投和人工复核队列。完整动作边界见 [审核与治理规则](docs/MODERATION_POLICY.md)，未来网页化可按 [管理后台设计基线](docs/ADMIN_BACKEND.md) 接入。
 
-频道管理后台的正式域名是 [tencent.ruitcarch.cloud](https://tencent.ruitcarch.cloud)。DNS、独立 Nginx 站点和自动续期 HTTPS 已启用；当前入口展示安全测试模式状态页，管理功能仍在接入。部署状态与上线检查项见 [部署与域名](docs/DEPLOYMENT.md)。
+频道管理后台的正式域名是 [tencent.ruitcarch.cloud](https://tencent.ruitcarch.cloud)。DNS、独立 Nginx 站点、自动续期 HTTPS 和密码登录后台均已启用。部署状态与上线检查项见 [部署与域名](docs/DEPLOYMENT.md)。
 
 “全部”和“热门”是展示视图，不作为内容分类。
 
@@ -150,13 +150,35 @@ qq-guard --config config.json audit --review-only
 qq-guard --config config.json dashboard
 ```
 
+## 可视化管理后台
+
+后台包含总览、审核队列、去重记录、规则与敏感词、频道与版块、内容测试和操作审计。管理员可以通过网页修改版本化规则、处理待审核内容，并查看每次判定的理由与证据。
+
+安装网页依赖：
+
+```bash
+pip install -e '.[web]'
+```
+
+生产环境必须通过环境变量提供随机会话密钥和经过 PBKDF2 处理的密码哈希，不能提交明文密码：
+
+```bash
+export QQ_GUARD_CONFIG='/绝对路径/config.json'
+export QQ_GUARD_SECRET_KEY='随机会话密钥'
+export QQ_GUARD_ADMIN_PASSWORD_HASH='Werkzeug 密码哈希'
+export QQ_GUARD_MANUAL_DELETE_ENABLED='false'
+qq-guard-web
+```
+
+真实人工删除需要同时满足：服务器显式启用、管理员已经登录、重新输入密码、输入“删除”、填写删除理由、十分钟内的一次性确认有效，以及腾讯官方 CLI 已登录。自动删除开关与人工删除相互独立，默认保持关闭。
+
 ## 运行测试
 
 ```bash
 python -m unittest discover -s tests -v
 ```
 
-测试覆盖：每周一问缺少井号话题、五类栏目判断、同作者连续重复、不同作者、不同栏目、非连续重复、网关重复投递，以及删除权限失败审计。
+测试覆盖：每周一问缺少井号话题、五类栏目判断、同作者连续重复、不同作者、不同栏目、非连续重复、网关重复投递、删除权限失败审计、后台登录、CSRF、规则修改、审核操作和删除二次确认。
 
 ## 上线建议
 

@@ -1,0 +1,20 @@
+{% extends "base.html" %}
+{% block title %}内容测试 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}内容测试{% endblock %}
+{% block content %}
+<div class="two-column align-start">
+  <section class="panel"><div class="panel-title"><div><h2>模拟检测一条内容</h2><p>只计算分类和审核结果，不连接 QQ，也不会删除</p></div></div>
+    <form method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>目标版块 ID<input name="channel_id" placeholder="可填写现有版块 ID"></label>
+      <label>标题<input name="title" maxlength="500"></label>
+      <label>正文<textarea name="body" rows="10" required placeholder="例如：#每周一问 你最常用的云原生工具是什么？"></textarea></label>
+      <label>图片或视频地址<textarea name="media_urls" rows="3" placeholder="每行一个，可留空"></textarea></label>
+      <button class="primary-button" type="submit">开始检测</button>
+    </form>
+  </section>
+  <section class="panel result-panel"><div class="panel-title"><div><h2>检测结果</h2><p>展示分类、置信度、风险分和具体理由</p></div></div>
+  {% if result %}<div class="result-score"><span>{{ section_labels.get(result.classification.section.value, result.classification.section.value) }}</span><strong>{{ (result.classification.confidence * 100)|round|int }}%</strong></div><p>风险：<span class="risk-pill risk-{{ result.moderation.risk_level.value }}">{{ risk_labels.get(result.moderation.risk_level.value) }} · {{ result.moderation.risk_score }}</span></p><p>建议动作：{{ action_labels.get(result.moderation.action.value) }}</p><div class="reason-list">{% for reason in result.moderation.reasons %}<article><div><strong>{{ reason.message }}</strong><span>{{ reason.code }}</span></div><b>+{{ reason.score }}</b>{% if reason.evidence %}<p>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有命中风险规则，可以放行。</p>{% endfor %}</div>{% else %}<p class="empty tall">填写左侧内容后查看结果</p>{% endif %}
+  </section>
+</div>
+{% endblock %}

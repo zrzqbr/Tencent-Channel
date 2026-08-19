@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}规则与敏感词 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}规则与敏感词{% endblock %}
+{% block content %}
+<div class="two-column align-start">
+  <section class="panel">
+    <div class="panel-title"><div><h2>审核参数</h2><p>当前策略 {{ moderation.get('policy_version','') }}</p></div></div>
+    <form action="{{ url_for('update_moderation') }}" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <div class="form-grid"><label>人工复核阈值<input type="number" name="review_threshold" min="0" max="100" value="{{ moderation.get('review_threshold',25) }}"></label><label>删除候选阈值<input type="number" name="delete_candidate_threshold" min="0" max="100" value="{{ moderation.get('delete_candidate_threshold',80) }}"></label><label>最低有效字符<input type="number" name="min_meaningful_length" min="0" value="{{ moderation.get('min_meaningful_length',4) }}"></label></div>
+      <label class="check"><input type="checkbox" name="enabled" {{ 'checked' if moderation.get('enabled',True) }}>启用审核机制</label>
+      <label class="check"><input type="checkbox" name="detect_contact_information" {{ 'checked' if moderation.get('detect_contact_information',True) }}>检测联系方式</label>
+      <label class="check"><input type="checkbox" name="detect_external_links" {{ 'checked' if moderation.get('detect_external_links',True) }}>检测外部链接</label>
+      <label class="check"><input type="checkbox" name="detect_obfuscated_terms" {{ 'checked' if moderation.get('detect_obfuscated_terms',True) }}>检测分隔符规避敏感词</label>
+      <button class="primary-button" type="submit">保存审核参数</button>
+    </form>
+  </section>
+  <section class="panel">
+    <div class="panel-title"><div><h2>分类关键词</h2><p>多个词用逗号分隔</p></div></div>
+    <form action="{{ url_for('update_keywords') }}" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>每周一问语义词<textarea name="weekly_phrase_keywords" rows="2">{{ rules.get('weekly_phrase_keywords',[])|join('，') }}</textarea></label>
+      <label>问答与交流关键词<textarea name="question_keywords" rows="3">{{ rules.get('question_keywords',[])|join('，') }}</textarea></label>
+      <label>实用文章关键词<textarea name="practical_keywords" rows="3">{{ rules.get('practical_keywords',[])|join('，') }}</textarea></label>
+      <div class="form-grid"><label>文章最短字数<input type="number" name="min_practical_text_length" value="{{ rules.get('min_practical_text_length',100) }}"></label><label>精华候选字数<input type="number" name="min_featured_text_length" value="{{ rules.get('min_featured_text_length',220) }}"></label></div>
+      <label class="check"><input type="checkbox" name="weekly_requires_any_hashtag" {{ 'checked' if rules.get('weekly_requires_any_hashtag',True) }}>每周一问必须包含井号话题</label>
+      <button class="primary-button" type="submit">保存分类规则</button>
+    </form>
+  </section>
+</div>
+
+<section class="panel">
+  <div class="panel-title"><div><h2>中英文敏感词</h2><p>每条规则都有语言、严重度、匹配方式和建议动作</p></div></div>
+  <form action="{{ url_for('add_term') }}" method="post" class="inline-form term-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <label>敏感词<input name="term" required maxlength="120"></label><label>语言<select name="language"><option value="zh">中文</option><option value="en">英文</option><option value="mixed">混合</option></select></label><label>分类<input name="category" value="custom" required></label><label>严重度<select name="severity"><option>medium</option><option>high</option><option>critical</option><option>low</option></select></label><label>动作<select name="action"><option value="review">人工复核</option><option value="delete_candidate">删除候选</option></select></label><label>匹配<select name="match_type"><option value="auto">自动</option><option value="word">英文单词</option><option value="substring">子串</option><option value="regex">正则</option></select></label><button class="primary-button compact" type="submit">添加</button>
+  </form>
+  <div class="table-wrap"><table><thead><tr><th>词</th><th>语言</th><th>分类</th><th>严重度</th><th>动作</th><th>匹配</th><th></th></tr></thead><tbody>
+  {% for term in terms %}<tr><td><strong>{{ term.term }}</strong></td><td>{{ term.language }}</td><td>{{ term.category }}</td><td><span class="risk-pill risk-{{ term.severity }}">{{ term.severity }}</span></td><td>{{ action_labels.get(term.action, term.action) }}</td><td>{{ term.get('match_type','auto') }}</td><td><form action="{{ url_for('delete_term', index=loop.index0) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link-danger" type="submit">移除</button></form></td></tr>{% else %}<tr><td colspan="7" class="empty">尚未配置敏感词</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endblock %}

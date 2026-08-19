@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qq-channel-content-guard"
-version = "0.2.0"
+version = "0.3.0"
 description = "QQ频道可解释分类、内容审核、连续去重与人工复核工具"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -12,10 +12,12 @@ dependencies = []
 
 [project.optional-dependencies]
 qq = ["qq-botpy>=1.2.1,<2"]
+web = ["Flask>=3.1,<4", "gunicorn>=23,<24"]
 
 [project.scripts]
 qq-guard = "qq_guard.cli:main"
 qq-guard-bot = "qq_guard.bot:main"
+qq-guard-web = "qq_guard.web:main"
 
 [tool.setuptools.packages.find]
 include = ["qq_guard*"]

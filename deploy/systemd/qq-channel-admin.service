@@ -1,0 +1,23 @@
+[Unit]
+Description=Tencent Channel Content Guard Admin
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=txa_deployer
+Group=txa_deployer
+WorkingDirectory=/srv/tencent-channel/app/current
+EnvironmentFile=/etc/tencent-channel.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/tencent-channel/app/venv/bin/gunicorn --workers 2 --threads 4 --timeout 120 --bind 127.0.0.1:8787 --access-logfile - --error-logfile - "qq_guard.web:create_app()"
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/srv/tencent-channel/shared
+
+[Install]
+WantedBy=multi-user.target

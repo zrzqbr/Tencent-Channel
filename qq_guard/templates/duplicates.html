@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}去重记录 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}严格去重记录{% endblock %}
+{% block content %}
+<section class="info-banner"><strong>判定边界</strong><p>仅命中同一频道、同一栏目、同一作者、连续且标题正文媒体完全一致的后一条内容。</p></section>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>频道</th><th>栏目</th><th>较新内容</th><th>上一条内容</th><th>处理结果</th><th>时间</th></tr></thead><tbody>
+{% for item in items %}<tr><td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ item.channel_id }}</small></td><td>{{ section_labels.get(item.section, item.section) }}</td><td class="mono break-all">{{ item.newer_feed_id }}</td><td class="mono break-all">{{ item.older_feed_id }}</td><td><span class="pill">{{ item.delete_status }}</span>{% if item.error %}<small class="subline error-text">{{ item.error }}</small>{% endif %}</td><td>{{ item.created_at|replace('T',' ')|truncate(19, True, '') }}</td></tr>{% else %}<tr><td colspan="6" class="empty">尚未检测到严格重复内容</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

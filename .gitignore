@@ -4,6 +4,7 @@ __pycache__/
 .venv/
 data/
 config.json
+config.json.bak
 .env
 botpy.log*
 *.egg-info/

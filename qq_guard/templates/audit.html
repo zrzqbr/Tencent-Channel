@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% block title %}操作审计 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}操作审计{% endblock %}
+{% block content %}
+<section class="info-banner"><strong>审计记录不可从后台删除</strong><p>登录、规则修改、审核、巡检和真实删除都会记录操作者、目标、请求编号和时间。</p></section>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>请求编号</th><th>详情</th></tr></thead><tbody>
+{% for item in items %}<tr><td>{{ item.created_at|replace('T',' ')|truncate(19, True, '') }}</td><td>{{ item.actor }}</td><td><span class="pill">{{ item.action }}</span></td><td>{{ item.target_type }} / {{ item.target_id }}</td><td class="mono">{{ item.request_id }}</td><td class="small-json">{{ item.details|tojson }}</td></tr>{% else %}<tr><td colspan="6" class="empty">暂无管理员操作</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

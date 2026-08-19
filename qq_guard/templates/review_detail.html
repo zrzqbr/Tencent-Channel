@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}审核详情 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}审核详情{% endblock %}
+{% block content %}
+<div class="detail-grid">
+  <section class="panel detail-main">
+    <div class="detail-heading">
+      <div><span class="pill">{{ section_labels.get(item.section, item.section) }}</span><h2>{{ item.title or '无标题内容' }}</h2></div>
+      <span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 · {{ item.risk_score }}</span>
+    </div>
+    <dl class="meta-grid">
+      <div><dt>频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>版块 ID</dt><dd>{{ item.channel_id }}</dd></div>
+      <div><dt>作者 ID</dt><dd>{{ item.author_id or '未返回' }}</dd></div><div><dt>内容 ID</dt><dd class="break-all">{{ item.item_id }}</dd></div>
+      <div><dt>策略版本</dt><dd>{{ item.policy_version }}</dd></div><div><dt>检测时间</dt><dd>{{ item.created_at|replace('T', ' ') }}</dd></div>
+    </dl>
+    <h3>正文</h3><div class="content-box">{{ item.body or '未保存正文；下次巡检将补齐完整内容。' }}</div>
+    {% if item.media_urls %}<h3>媒体信息</h3><div class="content-box mono">{{ item.media_urls|tojson }}</div>{% endif %}
+    <h3>判定理由</h3>
+    <div class="reason-list">
+      {% for reason in item.reasons %}<article><div><strong>{{ reason.message }}</strong><span>{{ reason.code }} · {{ reason.category }} · {{ reason.severity }}</span></div><b>+{{ reason.score or 0 }}</b>{% if reason.evidence %}<p>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有风险理由</p>{% endfor %}
+    </div>
+  </section>
+  <aside class="panel decision-panel">
+    <h2>管理员结论</h2>
+    <p>当前状态：<strong>{{ status_labels.get(item.review_status, item.review_status) }}</strong></p>
+    <form action="{{ url_for('resolve_review', source=item.source, row_id=item.id) }}" method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>处理备注<textarea name="notes" rows="4" placeholder="说明通过、驳回或忽略的原因"></textarea></label>
+      <div class="button-grid">
+        <button class="success-button" name="resolution" value="approved" type="submit">通过</button>
+        <button class="danger-outline" name="resolution" value="rejected" type="submit">驳回</button>
+        <button class="ghost-button" name="resolution" value="ignored" type="submit">忽略</button>
+      </div>
+    </form>
+    {% if item.source == 'tencent' %}
+    <div class="danger-zone">
+      <h3>删除内容</h3>
+      <p>需要重新输入管理密码、填写理由并进行二次确认。自动删除保持关闭。</p>
+      <form action="{{ url_for('prepare_delete', row_id=item.id) }}" method="post">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}>{{ '已删除' if item.delete_status == 'deleted' else '进入删除确认' }}</button>
+      </form>
+      {% if item.delete_error %}<p class="error-text">{{ item.delete_error }}</p>{% endif %}
+    </div>
+    {% endif %}
+  </aside>
+</div>
+{% endblock %}

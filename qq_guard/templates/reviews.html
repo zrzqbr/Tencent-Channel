@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}审核队列 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}审核队列{% endblock %}
+{% block content %}
+<section class="panel filter-panel">
+  <form method="get" class="filter-form">
+    <label>审核状态<select name="status"><option value="" {{ 'selected' if not selected_status }}>全部</option>{% for key in ['pending','approved','rejected','ignored','deleted'] %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ status_labels[key] }}</option>{% endfor %}</select></label>
+    <label>风险等级<select name="risk"><option value="">全部</option>{% for key in ['critical','high','medium','low'] %}<option value="{{ key }}" {{ 'selected' if selected_risk == key }}>{{ risk_labels[key] }}</option>{% endfor %}</select></label>
+    <label>频道 ID<input name="guild" value="{{ selected_guild }}" placeholder="留空查看全部"></label>
+    <button class="primary-button compact" type="submit">筛选</button>
+  </form>
+</section>
+<section class="panel">
+  {% set reviews = items %}{% include "partials/review_table.html" %}
+</section>
+{% endblock %}

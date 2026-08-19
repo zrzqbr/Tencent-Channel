@@ -57,6 +57,11 @@ class ModerationFinding:
     risk_score: int
     policy_version: str
     reasons: Tuple[PolicyReason, ...]
+    author_id: str = ""
+    body: str = ""
+    media_urls: Tuple[str, ...] = ()
+    source_created_at: str = ""
+    classification_json: str = "{}"
 
 
 @dataclass(frozen=True)
@@ -253,8 +258,86 @@ class TencentChannelMonitor:
     ) -> Dict[str, Any]:
         feed_id = str(feed.get("feed_id") or "")
         if feed_id not in cache:
-            cache[feed_id] = self.api.get_feed_detail(settings.guild_id, channel_id, feed_id)
+            version_key = self._feed_version(feed)
+            cached = self._cached_detail(settings.guild_id, feed_id, version_key)
+            if cached is not None:
+                cache[feed_id] = cached
+            else:
+                cache[feed_id] = self.api.get_feed_detail(
+                    settings.guild_id, channel_id, feed_id
+                )
+                self._store_detail(
+                    settings.guild_id,
+                    channel_id,
+                    feed_id,
+                    version_key,
+                    cache[feed_id],
+                )
         return cache[feed_id]
+
+    @staticmethod
+    def _feed_version(feed: Mapping[str, Any]) -> str:
+        canonical = {
+            "create_time": feed.get("create_time_raw"),
+            "update_time": feed.get("update_time_raw"),
+            "title": feed.get("title"),
+            "snippet": feed.get("content_snippet"),
+            "author_id": feed.get("author_id"),
+        }
+        value = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+    def _cached_detail(
+        self,
+        guild_id: str,
+        feed_id: str,
+        version_key: str,
+    ) -> Optional[Dict[str, Any]]:
+        with sqlite3.connect(str(self.database_path)) as connection:
+            row = connection.execute(
+                """
+                SELECT detail_json
+                FROM tencent_feed_cache
+                WHERE guild_id = ? AND feed_id = ? AND version_key = ?
+                """,
+                (guild_id, feed_id, version_key),
+            ).fetchone()
+        if not row:
+            return None
+        try:
+            return dict(json.loads(row[0]))
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return None
+
+    def _store_detail(
+        self,
+        guild_id: str,
+        channel_id: str,
+        feed_id: str,
+        version_key: str,
+        detail: Mapping[str, Any],
+    ) -> None:
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                INSERT INTO tencent_feed_cache
+                (guild_id, channel_id, feed_id, version_key, detail_json, fetched_at)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(guild_id, feed_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    version_key = excluded.version_key,
+                    detail_json = excluded.detail_json,
+                    fetched_at = excluded.fetched_at
+                """,
+                (
+                    guild_id,
+                    channel_id,
+                    feed_id,
+                    version_key,
+                    json.dumps(detail, ensure_ascii=False, sort_keys=True),
+                    _utc_now(),
+                ),
+            )
 
     def _classify_feed(
         self,
@@ -318,6 +401,21 @@ class TencentChannelMonitor:
             risk_score=assessment.risk_score,
             policy_version=assessment.policy_version,
             reasons=assessment.reasons,
+            author_id=item.author_id,
+            body=item.body,
+            media_urls=item.media_urls,
+            source_created_at=item.created_at or "",
+            classification_json=json.dumps(
+                {
+                    "section": classification.section.value,
+                    "confidence": classification.confidence,
+                    "reasons": list(classification.reasons),
+                    "hashtags": list(classification.hashtags),
+                    "validation_issues": list(classification.validation_issues),
+                    "featured_candidate": classification.featured_candidate,
+                },
+                ensure_ascii=False,
+            ),
         )
         self._record_moderation(finding)
         return [finding]
@@ -437,8 +535,28 @@ class TencentChannelMonitor:
                     policy_version TEXT NOT NULL,
                     reasons_json TEXT NOT NULL,
                     review_status TEXT NOT NULL DEFAULT 'pending',
+                    author_id TEXT NOT NULL DEFAULT '',
+                    body TEXT NOT NULL DEFAULT '',
+                    media_urls_json TEXT NOT NULL DEFAULT '[]',
+                    source_created_at TEXT NOT NULL DEFAULT '',
+                    classification_json TEXT NOT NULL DEFAULT '{}',
+                    delete_status TEXT NOT NULL DEFAULT 'not_requested',
+                    delete_error TEXT,
+                    delete_attempted_at TEXT,
+                    reviewed_by TEXT NOT NULL DEFAULT '',
+                    reviewed_at TEXT,
+                    review_notes TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     UNIQUE(guild_id, feed_id, policy_version)
+                );
+                CREATE TABLE IF NOT EXISTS tencent_feed_cache (
+                    guild_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    feed_id TEXT NOT NULL,
+                    version_key TEXT NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY(guild_id, feed_id)
                 );
                 """
             )
@@ -455,6 +573,17 @@ class TencentChannelMonitor:
                 "guild_id",
                 "TEXT NOT NULL DEFAULT ''",
             )
+            self._ensure_column(connection, "tencent_moderation_findings", "author_id", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "body", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "media_urls_json", "TEXT NOT NULL DEFAULT '[]'")
+            self._ensure_column(connection, "tencent_moderation_findings", "source_created_at", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "classification_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(connection, "tencent_moderation_findings", "delete_status", "TEXT NOT NULL DEFAULT 'not_requested'")
+            self._ensure_column(connection, "tencent_moderation_findings", "delete_error", "TEXT")
+            self._ensure_column(connection, "tencent_moderation_findings", "delete_attempted_at", "TEXT")
+            self._ensure_column(connection, "tencent_moderation_findings", "reviewed_by", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "reviewed_at", "TEXT")
+            self._ensure_column(connection, "tencent_moderation_findings", "review_notes", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(
                 connection,
                 "tencent_duplicate_actions",
@@ -533,8 +662,10 @@ class TencentChannelMonitor:
                 """
                 INSERT INTO tencent_moderation_findings
                 (guild_id, guild_name, channel_id, feed_id, title, section, action,
-                 risk_level, risk_score, policy_version, reasons_json, review_status, created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                 risk_level, risk_score, policy_version, reasons_json, review_status,
+                 author_id, body, media_urls_json, source_created_at, classification_json,
+                 created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id, feed_id, policy_version) DO UPDATE SET
                     guild_name = excluded.guild_name,
                     channel_id = excluded.channel_id,
@@ -544,6 +675,11 @@ class TencentChannelMonitor:
                     risk_level = excluded.risk_level,
                     risk_score = excluded.risk_score,
                     reasons_json = excluded.reasons_json,
+                    author_id = excluded.author_id,
+                    body = excluded.body,
+                    media_urls_json = excluded.media_urls_json,
+                    source_created_at = excluded.source_created_at,
+                    classification_json = excluded.classification_json,
                     created_at = excluded.created_at
                 """,
                 (
@@ -558,6 +694,11 @@ class TencentChannelMonitor:
                     finding.risk_score,
                     finding.policy_version,
                     json.dumps(reasons, ensure_ascii=False),
+                    finding.author_id,
+                    finding.body,
+                    json.dumps(finding.media_urls, ensure_ascii=False),
+                    finding.source_created_at,
+                    finding.classification_json,
                     _utc_now(),
                 ),
             )

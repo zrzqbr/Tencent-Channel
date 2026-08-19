@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}频道与版块 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}频道与版块{% endblock %}
+{% block content %}
+<section class="panel">
+  <div class="panel-title"><div><h2>已接入频道</h2><p>每个频道的数据和去重范围完全隔离</p></div></div>
+  <div class="channel-grid">{% for channel in channels %}<article><span class="mode-badge"><i></i>{{ '已启用' if channel.get('enabled',True) else '已停用' }}</span><h3>{{ channel.name }}</h3><p>频道 ID：{{ channel.guild_id }}</p><p>固定版块 {{ channel.get('channels',{})|length }} 个 · 自动分类入口 {{ channel.get('auto_classify_channels',{})|length }} 个</p></article>{% else %}<p class="empty">尚未配置频道</p>{% endfor %}</div>
+</section>
+<section class="panel">
+  <div class="panel-title"><div><h2>新增或修改版块规则</h2><p>同一版块允许多个栏目时将按内容自动分类</p></div></div>
+  <form action="{{ url_for('upsert_board') }}" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid"><label>版块 ID<input name="channel_id" inputmode="numeric" required></label><label>版块名称<input name="name" required maxlength="80"></label><label>最低有效字数<input type="number" name="min_text_length" min="0" value="4"></label></div>
+    <fieldset><legend>允许栏目</legend><div class="check-grid">{% for section in sections %}<label class="check"><input type="checkbox" name="expected_sections" value="{{ section.value }}">{{ section.display_name }}</label>{% endfor %}</div></fieldset>
+    <label class="check"><input type="checkbox" name="require_hashtag">必须包含井号话题</label>
+    <label class="check"><input type="checkbox" name="allow_external_links" checked>允许外部链接</label>
+    <button class="primary-button" type="submit">保存版块规则</button>
+  </form>
+</section>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>版块</th><th>ID</th><th>允许栏目</th><th>话题</th><th>最低字数</th><th>外链</th><th></th></tr></thead><tbody>
+{% for channel_id, board in boards.items() %}<tr><td><strong>{{ board.name }}</strong></td><td class="mono">{{ channel_id }}</td><td>{% for section in board.get('expected_sections',[]) %}<span class="pill">{{ section_labels.get(section, section) }}</span>{% endfor %}</td><td>{{ '必须' if board.get('require_hashtag') else '不强制' }}</td><td>{{ board.get('min_text_length',1) }}</td><td>{{ '允许' if board.get('allow_external_links',True) else '禁止' }}</td><td><form action="{{ url_for('delete_board', channel_id=channel_id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link-danger" type="submit">删除规则</button></form></td></tr>{% else %}<tr><td colspan="7" class="empty">尚未配置版块规则</td></tr>{% endfor %}
+</tbody></table></div></section>
+{% endblock %}

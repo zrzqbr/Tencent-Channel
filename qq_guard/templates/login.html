@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="robots" content="noindex, nofollow">
+  <title>管理员登录 · 腾讯频道内容治理后台</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
+</head>
+<body class="login-body">
+  <main class="login-card">
+    <div class="login-brand"><span class="brand-mark">T</span><span>腾讯频道内容治理后台</span></div>
+    <span class="mode-badge"><i></i>安全测试模式</span>
+    <h1>管理员登录</h1>
+    <p>登录后可查看分类结果、审核理由、去重记录和策略配置。</p>
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for category, message in messages %}<div class="flash {{ category }}">{{ message }}</div>{% endfor %}
+    {% endwith %}
+    <form method="post" class="stack-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="next" value="{{ next or request.args.get('next', '') }}">
+      <label>管理密码<input type="password" name="password" autocomplete="current-password" required autofocus></label>
+      <button class="primary-button" type="submit">进入后台</button>
+    </form>
+    <small>连续输错 5 次将暂时锁定登录。所有操作均写入审计记录。</small>
+  </main>
+</body>
+</html>
