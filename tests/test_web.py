@@ -21,6 +21,7 @@ TEST_PASSWORD = "test-only-password-9!"
 class FakeTencentClient:
     def __init__(self) -> None:
         self.deleted = []
+        self.moved = []
 
     def delete_feed(self, guild_id, channel_id, feed_id, create_time, live):
         self.deleted.append((guild_id, channel_id, feed_id, create_time, live))
@@ -28,6 +29,10 @@ class FakeTencentClient:
 
     def get_feed_detail(self, guild_id, channel_id, feed_id):
         return {"create_time_raw": "123456"}
+
+    def move_feed(self, guild_id, original_channel_id, target_channel_id, feed_id):
+        self.moved.append((guild_id, original_channel_id, target_channel_id, feed_id))
+        return {"success": True}
 
 
 class WebTests(unittest.TestCase):
@@ -302,7 +307,7 @@ class WebTests(unittest.TestCase):
             data={
                 "csrf_token": token,
                 "password": TEST_PASSWORD,
-                "confirmation": "删除",
+                "confirmation": "confirmed",
                 "reason": "命中明确的违规敏感词规则",
             },
             follow_redirects=True,
@@ -329,7 +334,7 @@ class WebTests(unittest.TestCase):
             data={
                 "csrf_token": self.csrf(response),
                 "password": "bad",
-                "confirmation": "删除",
+                "confirmation": "confirmed",
                 "reason": "不应实际执行删除操作",
             },
             follow_redirects=True,
@@ -356,7 +361,7 @@ class WebTests(unittest.TestCase):
             data={
                 "csrf_token": self.csrf(response),
                 "password": TEST_PASSWORD,
-                "confirmation": "删除 2 条",
+                "confirmation": "confirmed",
                 "reason": "两条均命中明确违规规则",
             },
             follow_redirects=True,
@@ -384,13 +389,64 @@ class WebTests(unittest.TestCase):
             data={
                 "csrf_token": self.csrf(response),
                 "password": "wrong",
-                "confirmation": "删除 1 条",
+                "confirmation": "confirmed",
                 "reason": "不应执行任何删除",
             },
             follow_redirects=True,
         )
         self.assertIn("未执行任何删除".encode("utf-8"), response.data)
         self.assertEqual(self.fake_cli.deleted, [])
+
+    def test_bulk_move_changes_real_board_and_records_audit(self):
+        first = self.insert_tencent_review("feed-1", "应该属于实用文章一")
+        second = self.insert_tencent_review("feed-2", "应该属于实用文章二")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [
+            {
+                "name": "测试频道",
+                "guild_id": "1",
+                "channels": {"qa_discussion": "2", "practical_article": "3"},
+                "poll_interval_seconds": 300,
+            }
+        ]
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        response = self.login()
+        response = self.client.post(
+            "/reviews/bulk-move/prepare",
+            data={
+                "csrf_token": self.csrf(response),
+                "review_ids": [str(first), str(second)],
+                "move_target": "1:3:practical_article",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("栏目调整二次确认".encode("utf-8"), response.data)
+        response = self.client.post(
+            "/reviews/bulk-move",
+            data={
+                "csrf_token": self.csrf(response),
+                "password": TEST_PASSWORD,
+                "confirmation": "confirmed",
+                "reason": "这些内容是完整案例文章",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("已将 2 条内容移动".encode("utf-8"), response.data)
+        self.assertEqual(
+            self.fake_cli.moved,
+            [("1", "2", "3", "feed-1"), ("1", "2", "3", "feed-2")],
+        )
+        with sqlite3.connect(str(self.database_path)) as connection:
+            rows = connection.execute(
+                "SELECT channel_id, section, review_status FROM tencent_moderation_findings ORDER BY id"
+            ).fetchall()
+            audits = connection.execute(
+                "SELECT COUNT(*) FROM admin_audit_actions WHERE action = 'move.execute'"
+            ).fetchone()[0]
+        self.assertEqual(rows, [("3", "practical_article", "approved")] * 2)
+        self.assertEqual(audits, 2)
 
     def test_scan_runs_in_background_and_reports_progress(self):
         class Report:

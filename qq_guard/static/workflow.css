@@ -278,6 +278,48 @@
   color: #8b96a8;
 }
 
+.bulk-move-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.bulk-move-controls select {
+  min-width: 230px;
+  padding: 9px 11px;
+  font-size: 12px;
+}
+
+.confirm-check {
+  display: grid !important;
+  grid-template-columns: auto 1fr;
+  align-items: flex-start;
+  gap: 9px !important;
+  padding: 13px;
+  border: 1px solid #e2e7ef;
+  border-radius: 11px;
+  background: #f8faff;
+  line-height: 1.55;
+}
+
+.confirm-check input {
+  width: auto;
+  margin-top: 3px;
+}
+
+.move-icon {
+  display: grid;
+  place-items: center;
+  width: 58px;
+  height: 58px;
+  margin: 0 auto 16px;
+  border-radius: 50%;
+  background: #eaf2ff;
+  color: #2868df;
+  font-size: 26px;
+  font-weight: 800;
+}
+
 .bulk-select-all {
   display: flex;
   align-items: center;
@@ -476,6 +518,15 @@
   .bulk-toolbar small {
     width: 100%;
     margin-left: 0;
+  }
+
+  .bulk-move-controls {
+    width: 100%;
+  }
+
+  .bulk-move-controls select {
+    min-width: 0;
+    flex: 1;
   }
 
   .ai-metric-grid {

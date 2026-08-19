@@ -254,6 +254,7 @@ def create_app(
             status = "pending"
         risk = request.args.get("risk", "")
         guild_id = request.args.get("guild", "")
+        current = GuardConfig.from_file(str(resolved_config))
         return render_template(
             "reviews.html",
             items=store.reviews(status=status, risk_level=risk, guild_id=guild_id),
@@ -261,6 +262,7 @@ def create_app(
             selected_risk=risk,
             selected_guild=guild_id,
             show_bulk_actions=True,
+            move_targets=_configured_move_targets(current),
         )
 
     @app.get("/ai-analysis")
@@ -347,7 +349,7 @@ def create_app(
     @app.post("/reviews/tencent/<int:row_id>/delete")
     @login_required
     def execute_delete(row_id: int):
-        challenge = session.pop("delete_challenge", {}) or {}
+        challenge = session.get("delete_challenge", {}) or {}
         password = request.form.get("password", "")
         confirmation = request.form.get("confirmation", "").strip()
         reason = request.form.get("reason", "").strip()[:1000]
@@ -358,9 +360,10 @@ def create_app(
             store.record_audit("admin", "delete.reauth_failed", "tencent", str(row_id), {}, remote_ip())
             flash("管理员密码验证失败，未执行删除。", "error")
             return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        if confirmation != "删除" or len(reason) < 4:
-            flash("请输入“删除”，并填写至少 4 个字符的删除理由。", "error")
+        if confirmation != "confirmed" or len(reason) < 4:
+            flash("请勾选删除确认，并填写至少 4 个字符的删除理由。", "error")
             return redirect(url_for("review_detail", source="tencent", row_id=row_id))
+        session.pop("delete_challenge", None)
         try:
             if int(challenge.get("row_id") or 0) != row_id:
                 raise ValueError("删除确认已失效，请重新发起")
@@ -431,13 +434,12 @@ def create_app(
     @app.post("/reviews/bulk-delete")
     @login_required
     def execute_bulk_delete():
-        challenge = session.pop("bulk_delete_challenge", {}) or {}
+        challenge = session.get("bulk_delete_challenge", {}) or {}
         row_ids = _selected_row_ids(challenge.get("row_ids") or [])
         tokens = challenge.get("tokens") or {}
         password = request.form.get("password", "")
         confirmation = request.form.get("confirmation", "").strip()
         reason = request.form.get("reason", "").strip()[:1000]
-        expected_confirmation = f"删除 {len(row_ids)} 条"
         if not manual_delete_enabled():
             flash("服务器尚未启用人工删除能力。", "error")
             return redirect(url_for("reviews"))
@@ -455,9 +457,10 @@ def create_app(
             )
             flash("管理员密码验证失败，未执行任何删除。", "error")
             return redirect(url_for("reviews"))
-        if confirmation != expected_confirmation or len(reason) < 4:
-            flash(f"请输入“{expected_confirmation}”，并填写至少 4 个字符的删除理由。", "error")
+        if confirmation != "confirmed" or len(reason) < 4:
+            flash("请勾选批量删除确认，并填写至少 4 个字符的删除理由。", "error")
             return redirect(url_for("reviews"))
+        session.pop("bulk_delete_challenge", None)
 
         client = cli_factory()
         deleted = 0
@@ -495,6 +498,126 @@ def create_app(
             flash(f"批量删除完成：成功 {deleted} 条、失败 {failed} 条。", "error")
         else:
             flash(f"已删除所选 {deleted} 条内容，理由和平台结果均已记录。", "success")
+        return redirect(url_for("reviews", status=""))
+
+    @app.post("/reviews/bulk-move/prepare")
+    @login_required
+    def prepare_bulk_move():
+        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
+        if not row_ids:
+            flash("请先勾选要调整栏目的内容。", "error")
+            return redirect(url_for("reviews"))
+        if len(row_ids) > 20:
+            flash("每次最多移动 20 条内容。", "error")
+            return redirect(url_for("reviews"))
+        current = GuardConfig.from_file(str(resolved_config))
+        target = _find_move_target(current, request.form.get("move_target", ""))
+        if target is None:
+            flash("请选择有效的目标栏目。", "error")
+            return redirect(url_for("reviews"))
+        try:
+            items = [store.get_review("tencent", row_id) for row_id in row_ids]
+            if any(item["guild_id"] != target["guild_id"] for item in items):
+                raise ValueError("所选内容必须属于目标栏目的同一个频道")
+            if any(item["channel_id"] == target["channel_id"] for item in items):
+                raise ValueError("所选内容中已有帖子位于目标版块，请取消这些帖子后重试")
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("reviews"))
+        session["bulk_move_challenge"] = {
+            "row_ids": row_ids,
+            "target_key": target["key"],
+            "token": secrets.token_urlsafe(24),
+            "created_at": int(time.time()),
+        }
+        return redirect(url_for("confirm_bulk_move"))
+
+    @app.get("/reviews/bulk-move/confirm")
+    @login_required
+    def confirm_bulk_move():
+        challenge = session.get("bulk_move_challenge") or {}
+        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
+        current = GuardConfig.from_file(str(resolved_config))
+        target = _find_move_target(current, challenge.get("target_key", ""))
+        if (
+            not row_ids
+            or target is None
+            or int(challenge.get("created_at") or 0) < int(time.time()) - 600
+        ):
+            session.pop("bulk_move_challenge", None)
+            flash("栏目调整确认已失效，请重新勾选。", "error")
+            return redirect(url_for("reviews"))
+        try:
+            items = [store.get_review("tencent", row_id) for row_id in row_ids]
+        except ValueError:
+            abort(404)
+        return render_template("bulk_confirm_move.html", items=items, target=target)
+
+    @app.post("/reviews/bulk-move")
+    @login_required
+    def execute_bulk_move():
+        challenge = session.get("bulk_move_challenge") or {}
+        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
+        current = GuardConfig.from_file(str(resolved_config))
+        target = _find_move_target(current, challenge.get("target_key", ""))
+        reason = request.form.get("reason", "").strip()[:1000]
+        password = request.form.get("password", "")
+        confirmation = request.form.get("confirmation", "")
+        if (
+            not row_ids
+            or target is None
+            or int(challenge.get("created_at") or 0) < int(time.time()) - 600
+        ):
+            flash("栏目调整确认已失效，请重新勾选。", "error")
+            return redirect(url_for("reviews"))
+        if not check_password_hash(password_hash, password):
+            store.record_audit(
+                "admin", "move.bulk_reauth_failed", "tencent", ",".join(map(str, row_ids)),
+                {"count": len(row_ids)}, remote_ip()
+            )
+            flash("管理员密码验证失败，未移动任何内容。", "error")
+            return redirect(url_for("confirm_bulk_move"))
+        if confirmation != "confirmed" or len(reason) < 4:
+            flash("请勾选栏目调整确认，并填写至少 4 个字符的调整理由。", "error")
+            return redirect(url_for("confirm_bulk_move"))
+        session.pop("bulk_move_challenge", None)
+
+        client = cli_factory()
+        moved = 0
+        failed = 0
+        stopped = False
+        for row_id in row_ids:
+            item = store.get_review("tencent", row_id)
+            try:
+                client.move_feed(
+                    item["guild_id"], item["channel_id"], target["channel_id"], item["item_id"]
+                )
+            except Exception as exc:
+                error = f"{type(exc).__name__}: {exc}"[:500]
+                store.record_move_result(
+                    row_id, "admin", "failed", target["channel_id"],
+                    target["section"], error, reason, remote_ip()
+                )
+                failed += 1
+                if _is_rate_limit_error(exc):
+                    stopped = True
+                    break
+            else:
+                store.record_move_result(
+                    row_id, "admin", "moved", target["channel_id"],
+                    target["section"], "", reason, remote_ip()
+                )
+                moved += 1
+        untouched = len(row_ids) - moved - failed
+        if stopped:
+            flash(
+                f"栏目调整因平台频率限制停止：成功 {moved} 条、失败 {failed} 条、未执行 {untouched} 条。",
+                "error",
+            )
+        elif failed:
+            flash(f"栏目调整完成：成功 {moved} 条、失败 {failed} 条。", "error")
+        else:
+            flash(f"已将 {moved} 条内容移动到“{target['label']}”。", "success")
         return redirect(url_for("reviews", status=""))
 
     @app.get("/duplicates")
@@ -817,6 +940,49 @@ def _selected_row_ids(values) -> list:
         if row_id > 0 and row_id not in row_ids:
             row_ids.append(row_id)
     return row_ids
+
+
+def _configured_move_targets(config: GuardConfig) -> list:
+    targets = []
+    seen = set()
+    for settings in config.tencent_channels:
+        guild_name = settings.name or settings.guild_id
+        for section, channel_id in settings.channels.items():
+            key = f"{settings.guild_id}:{channel_id}:{section.value}"
+            if key not in seen:
+                targets.append(
+                    {
+                        "key": key,
+                        "guild_id": settings.guild_id,
+                        "guild_name": guild_name,
+                        "channel_id": channel_id,
+                        "section": section.value,
+                        "label": section.display_name,
+                    }
+                )
+                seen.add(key)
+        for channel_name, channel_id in settings.auto_classify_channels.items():
+            board = config.board_policies.get(channel_id)
+            sections = board.expected_sections if board and board.expected_sections else (Section.UNCLASSIFIED,)
+            for section in sections:
+                key = f"{settings.guild_id}:{channel_id}:{section.value}"
+                if key not in seen:
+                    targets.append(
+                        {
+                            "key": key,
+                            "guild_id": settings.guild_id,
+                            "guild_name": guild_name,
+                            "channel_id": channel_id,
+                            "section": section.value,
+                            "label": f"{channel_name} · {section.display_name}",
+                        }
+                    )
+                    seen.add(key)
+    return targets
+
+
+def _find_move_target(config: GuardConfig, key: str):
+    return next((target for target in _configured_move_targets(config) if target["key"] == key), None)
 
 
 def _delete_tencent_item(client: TencentCliClient, item: Dict[str, Any]) -> None:

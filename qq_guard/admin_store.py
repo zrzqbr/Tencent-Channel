@@ -412,6 +412,64 @@ class AdminStore:
             )
             connection.commit()
 
+    def record_move_result(
+        self,
+        row_id: int,
+        actor: str,
+        status: str,
+        target_channel_id: str,
+        target_section: str,
+        error: str,
+        reason: str,
+        remote_ip: str = "",
+    ) -> None:
+        now = _utc_now()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT channel_id, section, feed_id FROM tencent_moderation_findings WHERE id = ?",
+                (int(row_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ValueError("审核记录不存在")
+            if status == "moved":
+                connection.execute(
+                    """
+                    UPDATE tencent_moderation_findings
+                    SET channel_id = ?, section = ?, review_status = 'approved',
+                        reviewed_by = ?, reviewed_at = ?, review_notes = ?
+                    WHERE id = ?
+                    """,
+                    (
+                        target_channel_id,
+                        target_section,
+                        actor,
+                        now,
+                        reason,
+                        int(row_id),
+                    ),
+                )
+            self._insert_audit(
+                connection,
+                actor,
+                "move.execute",
+                "tencent",
+                str(row_id),
+                {
+                    "status": status,
+                    "feed_id": row["feed_id"],
+                    "original_channel_id": row["channel_id"],
+                    "original_section": row["section"],
+                    "target_channel_id": target_channel_id,
+                    "target_section": target_section,
+                    "error": error,
+                    "reason": reason,
+                },
+                remote_ip,
+            )
+            connection.commit()
+
     def _initialize(self) -> None:
         with self._connect() as connection:
             connection.execute("PRAGMA journal_mode=WAL")

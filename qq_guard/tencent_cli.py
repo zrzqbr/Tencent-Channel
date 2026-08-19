@@ -97,6 +97,31 @@ class TencentCliClient:
         arguments.append("--json")
         return self._run(arguments)
 
+    def move_feed(
+        self,
+        guild_id: str,
+        original_channel_id: str,
+        target_channel_id: str,
+        feed_id: str,
+    ) -> Dict[str, Any]:
+        return self._run(
+            [
+                "feed",
+                "move-feed",
+                "--guild-id",
+                self._digits(guild_id, "guild_id"),
+                "--original-channel-id",
+                self._digits(original_channel_id, "original_channel_id"),
+                "--channel-id",
+                self._digits(target_channel_id, "channel_id"),
+                "--feed-id",
+                self._feed_id(feed_id),
+                "--yes",
+                "--json",
+            ],
+            retries=3,
+        )
+
     def _run(self, arguments: Sequence[str], retries: int = 0) -> Dict[str, Any]:
         for attempt in range(max(0, int(retries)) + 1):
             self._throttle()

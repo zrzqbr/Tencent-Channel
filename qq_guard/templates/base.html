@@ -21,7 +21,7 @@
         </a>
         <div class="nav-group">
           <p>审核工作流</p>
-          <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete'] }}" href="{{ url_for('reviews') }}">
+          <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete', 'confirm_bulk_delete', 'confirm_bulk_move'] }}" href="{{ url_for('reviews') }}">
             <span>审核结果与审批</span><small>规则、VITA、Hy3 与终审</small>
           </a>
           <a class="nav-link {{ 'active' if request.endpoint == 'ai_analysis' }}" href="{{ url_for('ai_analysis') }}">

@@ -93,10 +93,13 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
   const checkboxes = Array.from(form.querySelectorAll('[data-review-checkbox]:not(:disabled)'));
   const count = form.querySelector('[data-selected-count]');
   const submit = form.querySelector('[data-bulk-delete]');
+  const moveButton = form.querySelector('[data-bulk-move]');
+  const moveTarget = form.querySelector('[data-move-target]');
   const update = () => {
     const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
     count.textContent = String(selected);
     submit.disabled = selected === 0 || selected > 20;
+    moveButton.disabled = selected === 0 || selected > 20 || !moveTarget.value;
     selectAll.checked = checkboxes.length > 0 && selected === checkboxes.length;
     selectAll.indeterminate = selected > 0 && selected < checkboxes.length;
   };
@@ -105,5 +108,6 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
     update();
   });
   checkboxes.forEach((checkbox) => checkbox.addEventListener('change', update));
+  moveTarget.addEventListener('change', update);
   update();
 });
