@@ -129,7 +129,9 @@ class WebTests(unittest.TestCase):
         self.assertIn("治理总览".encode("utf-8"), response.data)
         return response
 
-    def insert_tencent_review(self, feed_id="feed-1", title="违规测试") -> int:
+    def insert_tencent_review(
+        self, feed_id="feed-1", title="违规测试", policy_version="2026-08-19.1"
+    ) -> int:
         AdminStore(self.database_path)
         with sqlite3.connect(str(self.database_path)) as connection:
             cursor = connection.execute(
@@ -140,13 +142,14 @@ class WebTests(unittest.TestCase):
                  author_id, body, media_urls_json, source_created_at, classification_json,
                  delete_status, created_at)
                 VALUES ('1', '测试频道', '2', ?, ?, 'qa_discussion',
-                        'delete_candidate', 'high', 80, '2026-08-19.1', ?, 'pending',
+                        'delete_candidate', 'high', 80, ?, ?, 'pending',
                         'author', 'casino', '[]', '123456', '{}', 'not_requested',
                         '2026-08-19T00:00:00+00:00')
                 """,
                 (
                     feed_id,
                     title,
+                    policy_version,
                     json.dumps([{"code": "sensitive_term_en", "message": "命中英文敏感词", "score": 80}]),
                 ),
             )
@@ -416,6 +419,22 @@ class WebTests(unittest.TestCase):
         store.consume_action_challenge("bulk_delete", "admin", token)
         with self.assertRaisesRegex(ValueError, "已经提交"):
             store.consume_action_challenge("bulk_delete", "admin", token)
+
+    def test_review_queue_hides_historical_policy_rows_and_delete_propagates(self):
+        old_id = self.insert_tencent_review("same-feed", "旧策略记录", "policy.1")
+        latest_id = self.insert_tencent_review("same-feed", "新策略记录", "policy.2")
+        store = AdminStore(self.database_path)
+        items = store.reviews(status="")
+        matching = [item for item in items if item["item_id"] == "same-feed"]
+        self.assertEqual([item["id"] for item in matching], [latest_id])
+        with self.assertRaisesRegex(ValueError, "历史审核记录"):
+            store.ensure_current_tencent_review(old_id)
+        store.record_delete_result(latest_id, "admin", "deleted", "", "测试删除成功")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            states = connection.execute(
+                "SELECT delete_status, review_status FROM tencent_moderation_findings WHERE feed_id = 'same-feed' ORDER BY id"
+            ).fetchall()
+        self.assertEqual(states, [("deleted", "deleted"), ("deleted", "deleted")])
 
     def test_bulk_move_changes_real_board_and_records_audit(self):
         first = self.insert_tencent_review("feed-1", "应该属于实用文章一")

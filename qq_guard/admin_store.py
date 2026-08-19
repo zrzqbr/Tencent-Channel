@@ -150,6 +150,13 @@ class AdminStore:
                 WHERE (? = '' OR review_status = ?)
                   AND (? = '' OR risk_level = ?)
                   AND (? = '' OR guild_id = ?)
+                  AND review_status <> 'superseded'
+                  AND id = (
+                      SELECT MAX(current.id)
+                      FROM tencent_moderation_findings AS current
+                      WHERE current.guild_id = tencent_moderation_findings.guild_id
+                        AND current.feed_id = tencent_moderation_findings.feed_id
+                  )
                 ORDER BY risk_score DESC, id DESC
                 LIMIT ?
                 """,
@@ -318,6 +325,7 @@ class AdminStore:
         remote_ip: str = "",
     ) -> str:
         review = self.get_review("tencent", row_id)
+        self.ensure_current_tencent_review(row_id)
         if review["delete_status"] == "deleted":
             raise ValueError("该内容已经删除")
         token = secrets.token_urlsafe(32)
@@ -349,6 +357,39 @@ class AdminStore:
             )
             connection.commit()
         return token
+
+    def ensure_current_tencent_review(self, row_id: int) -> None:
+        with self._connect() as connection:
+            row = connection.execute(
+                """
+                SELECT id, guild_id, feed_id, delete_status
+                FROM tencent_moderation_findings WHERE id = ?
+                """,
+                (int(row_id),),
+            ).fetchone()
+            if row is None:
+                raise ValueError("审核记录不存在")
+            latest = connection.execute(
+                """
+                SELECT id, delete_status
+                FROM tencent_moderation_findings
+                WHERE guild_id = ? AND feed_id = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (row["guild_id"], row["feed_id"]),
+            ).fetchone()
+            deleted = connection.execute(
+                """
+                SELECT 1 FROM tencent_moderation_findings
+                WHERE guild_id = ? AND feed_id = ? AND delete_status = 'deleted'
+                LIMIT 1
+                """,
+                (row["guild_id"], row["feed_id"]),
+            ).fetchone()
+        if deleted:
+            raise ValueError("该内容已经删除")
+        if latest is None or int(latest["id"]) != int(row_id):
+            raise ValueError("这是同一帖子的历史审核记录，请刷新页面后操作最新记录")
 
     def consume_delete_challenge(self, row_id: int, actor: str, token: str) -> None:
         token_hash = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
@@ -455,6 +496,13 @@ class AdminStore:
         review_status = "deleted" if status == "deleted" else "pending"
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
+            review = connection.execute(
+                "SELECT guild_id, feed_id FROM tencent_moderation_findings WHERE id = ?",
+                (int(row_id),),
+            ).fetchone()
+            if review is None:
+                connection.rollback()
+                raise ValueError("审核记录不存在")
             if status == "failed":
                 cursor = connection.execute(
                     """
@@ -462,15 +510,27 @@ class AdminStore:
                     SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
                         review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
                     WHERE id = ? AND delete_status <> 'deleted'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM tencent_moderation_findings AS sibling
+                          WHERE sibling.guild_id = ? AND sibling.feed_id = ?
+                            AND sibling.delete_status = 'deleted'
+                      )
                     """,
-                    (status, error or None, now, review_status, actor, now, reason, int(row_id)),
+                    (
+                        status, error or None, now, review_status, actor, now, reason,
+                        int(row_id), review["guild_id"], review["feed_id"],
+                    ),
                 )
                 if cursor.rowcount == 0:
                     existing = connection.execute(
-                        "SELECT delete_status FROM tencent_moderation_findings WHERE id = ?",
-                        (int(row_id),),
+                        """
+                        SELECT 1 FROM tencent_moderation_findings
+                        WHERE guild_id = ? AND feed_id = ? AND delete_status = 'deleted'
+                        LIMIT 1
+                        """,
+                        (review["guild_id"], review["feed_id"]),
                     ).fetchone()
-                    if existing and existing["delete_status"] == "deleted":
+                    if existing:
                         self._insert_audit(
                             connection,
                             actor,
@@ -488,11 +548,14 @@ class AdminStore:
                     UPDATE tencent_moderation_findings
                     SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
                         review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
-                    WHERE id = ?
+                    WHERE guild_id = ? AND feed_id = ?
                     """,
-                    (status, error or None, now, review_status, actor, now, reason, int(row_id)),
+                    (
+                        status, error or None, now, review_status, actor, now, reason,
+                        review["guild_id"], review["feed_id"],
+                    ),
                 )
-            if cursor.rowcount != 1:
+            if cursor.rowcount < 1:
                 connection.rollback()
                 raise ValueError("审核记录不存在")
             self._insert_audit(

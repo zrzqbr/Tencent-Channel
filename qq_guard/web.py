@@ -398,6 +398,7 @@ def create_app(
             for item in items:
                 if item.get("delete_status") == "deleted":
                     raise ValueError(f"内容 {item['item_id']} 已经删除")
+                store.ensure_current_tencent_review(item["id"])
             challenges = {
                 str(row_id): store.create_delete_challenge(row_id, "admin", remote_ip())
                 for row_id in row_ids
