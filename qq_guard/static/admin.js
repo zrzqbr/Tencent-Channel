@@ -111,3 +111,11 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
   moveTarget.addEventListener('change', update);
   update();
 });
+
+document.querySelectorAll('[data-confirm-action-form]').forEach((form) => {
+  form.addEventListener('submit', () => {
+    const button = form.querySelector('[data-confirm-submit]');
+    button.disabled = true;
+    button.textContent = '正在提交，请勿重复点击…';
+  });
+});

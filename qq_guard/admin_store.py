@@ -376,6 +376,72 @@ class AdminStore:
             )
             connection.commit()
 
+    def create_action_challenge(
+        self,
+        action: str,
+        actor: str,
+        remote_ip: str = "",
+    ) -> str:
+        if action not in {"bulk_delete", "bulk_move"}:
+            raise ValueError("操作确认类型无效")
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                INSERT INTO manual_delete_requests
+                (token_hash, source, target_id, actor, created_at, expires_at)
+                VALUES (?, ?, 0, ?, ?, ?)
+                """,
+                (
+                    token_hash,
+                    action,
+                    actor,
+                    now.isoformat(),
+                    (now + timedelta(minutes=10)).isoformat(),
+                ),
+            )
+            self._insert_audit(
+                connection,
+                actor,
+                f"{action}.prepare",
+                "tencent_batch",
+                "0",
+                {},
+                remote_ip,
+            )
+            connection.commit()
+        return token
+
+    def consume_action_challenge(self, action: str, actor: str, token: str) -> None:
+        if action not in {"bulk_delete", "bulk_move"}:
+            raise ValueError("操作确认类型无效")
+        token_hash = hashlib.sha256(str(token).encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                """
+                SELECT id, expires_at, used_at
+                FROM manual_delete_requests
+                WHERE token_hash = ? AND source = ? AND target_id = 0 AND actor = ?
+                ORDER BY id DESC LIMIT 1
+                """,
+                (token_hash, action, actor),
+            ).fetchone()
+            if row is None or row["used_at"]:
+                connection.rollback()
+                raise ValueError("该批操作已经提交，请刷新页面查看最终结果")
+            if datetime.fromisoformat(row["expires_at"]) < now:
+                connection.rollback()
+                raise ValueError("批量操作确认已过期，请重新发起")
+            connection.execute(
+                "UPDATE manual_delete_requests SET used_at = ? WHERE id = ?",
+                (now.isoformat(), int(row["id"])),
+            )
+            connection.commit()
+
     def record_delete_result(
         self,
         row_id: int,
@@ -389,15 +455,43 @@ class AdminStore:
         review_status = "deleted" if status == "deleted" else "pending"
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
-            cursor = connection.execute(
-                """
-                UPDATE tencent_moderation_findings
-                SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
-                    review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
-                WHERE id = ?
-                """,
-                (status, error or None, now, review_status, actor, now, reason, int(row_id)),
-            )
+            if status == "failed":
+                cursor = connection.execute(
+                    """
+                    UPDATE tencent_moderation_findings
+                    SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
+                        review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
+                    WHERE id = ? AND delete_status <> 'deleted'
+                    """,
+                    (status, error or None, now, review_status, actor, now, reason, int(row_id)),
+                )
+                if cursor.rowcount == 0:
+                    existing = connection.execute(
+                        "SELECT delete_status FROM tencent_moderation_findings WHERE id = ?",
+                        (int(row_id),),
+                    ).fetchone()
+                    if existing and existing["delete_status"] == "deleted":
+                        self._insert_audit(
+                            connection,
+                            actor,
+                            "delete.duplicate_result_ignored",
+                            "tencent",
+                            str(row_id),
+                            {"attempted_status": status, "error": error},
+                            remote_ip,
+                        )
+                        connection.commit()
+                        return
+            else:
+                cursor = connection.execute(
+                    """
+                    UPDATE tencent_moderation_findings
+                    SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
+                        review_status = ?, reviewed_by = ?, reviewed_at = ?, review_notes = ?
+                    WHERE id = ?
+                    """,
+                    (status, error or None, now, review_status, actor, now, reason, int(row_id)),
+                )
             if cursor.rowcount != 1:
                 connection.rollback()
                 raise ValueError("审核记录不存在")

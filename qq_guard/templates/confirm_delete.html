@@ -7,12 +7,12 @@
   <h2>这一步会真实删除频道内容</h2>
   <p>删除对象：<strong>{{ item.title or item.item_id }}</strong></p>
   <dl class="meta-grid"><div><dt>频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div><div><dt>内容 ID</dt><dd class="break-all">{{ item.item_id }}</dd></div><div><dt>风险</dt><dd>{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</dd></div></dl>
-  <form action="{{ url_for('execute_delete', row_id=item.id) }}" method="post" class="stack-form narrow-form">
+  <form action="{{ url_for('execute_delete', row_id=item.id) }}" method="post" class="stack-form narrow-form" data-confirm-action-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>删除理由<textarea name="reason" rows="4" minlength="4" required placeholder="必须说明为什么删除，这段文字将永久写入审计记录"></textarea></label>
     <label class="confirm-check"><input type="checkbox" name="confirmation" value="confirmed" required> 我确认删除这条内容，并理解删除后无法在后台恢复</label>
     <label>再次输入管理密码<input type="password" name="password" autocomplete="current-password" required></label>
-    <button class="danger-button" type="submit">确认并执行真实删除</button>
+    <button class="danger-button" type="submit" data-confirm-submit>确认并执行真实删除</button>
     <a class="ghost-button center" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">取消</a>
   </form>
 </section>

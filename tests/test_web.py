@@ -320,6 +320,19 @@ class WebTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(status, "deleted")
 
+        AdminStore(self.database_path).record_delete_result(
+            row_id,
+            "admin",
+            "failed",
+            "重复请求的一次性确认已失效",
+            "不应覆盖成功状态",
+        )
+        with sqlite3.connect(str(self.database_path)) as connection:
+            status = connection.execute(
+                "SELECT delete_status FROM tencent_moderation_findings WHERE id = ?", (row_id,)
+            ).fetchone()[0]
+        self.assertEqual(status, "deleted")
+
     def test_delete_fails_with_wrong_password(self):
         row_id = self.insert_tencent_review()
         response = self.login()
@@ -396,6 +409,13 @@ class WebTests(unittest.TestCase):
         )
         self.assertIn("未执行任何删除".encode("utf-8"), response.data)
         self.assertEqual(self.fake_cli.deleted, [])
+
+    def test_batch_action_challenge_can_only_be_consumed_once(self):
+        store = AdminStore(self.database_path)
+        token = store.create_action_challenge("bulk_delete", "admin")
+        store.consume_action_challenge("bulk_delete", "admin", token)
+        with self.assertRaisesRegex(ValueError, "已经提交"):
+            store.consume_action_challenge("bulk_delete", "admin", token)
 
     def test_bulk_move_changes_real_board_and_records_audit(self):
         first = self.insert_tencent_review("feed-1", "应该属于实用文章一")

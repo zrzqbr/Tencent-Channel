@@ -11,12 +11,12 @@
     <article><div><strong>{{ item.title or item.item_id }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.item_id }}</small></div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</span></article>
     {% endfor %}
   </div>
-  <form action="{{ url_for('execute_bulk_delete') }}" method="post" class="stack-form narrow-form">
+  <form action="{{ url_for('execute_bulk_delete') }}" method="post" class="stack-form narrow-form" data-confirm-action-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>统一删除理由<textarea name="reason" rows="4" minlength="4" required placeholder="说明这些内容为什么需要删除；理由将逐条写入审计记录"></textarea></label>
     <label class="confirm-check"><input type="checkbox" name="confirmation" value="confirmed" required> 我确认删除上方列出的 {{ items|length }} 条内容，并理解删除后无法在后台恢复</label>
     <label>再次输入管理密码<input type="password" name="password" autocomplete="current-password" required></label>
-    <button class="danger-button" type="submit">确认并批量执行真实删除</button>
+    <button class="danger-button" type="submit" data-confirm-submit>确认并批量执行真实删除</button>
     <a class="ghost-button center" href="{{ url_for('reviews') }}">取消</a>
   </form>
 </section>

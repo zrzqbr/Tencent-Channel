@@ -402,12 +402,14 @@ def create_app(
                 str(row_id): store.create_delete_challenge(row_id, "admin", remote_ip())
                 for row_id in row_ids
             }
+            batch_token = store.create_action_challenge("bulk_delete", "admin", remote_ip())
         except ValueError as exc:
             flash(str(exc), "error")
             return redirect(url_for("reviews"))
         session["bulk_delete_challenge"] = {
             "row_ids": row_ids,
             "tokens": challenges,
+            "batch_token": batch_token,
             "created_at": int(time.time()),
         }
         return redirect(url_for("confirm_bulk_delete"))
@@ -461,6 +463,14 @@ def create_app(
             flash("请勾选批量删除确认，并填写至少 4 个字符的删除理由。", "error")
             return redirect(url_for("reviews"))
         session.pop("bulk_delete_challenge", None)
+
+        try:
+            store.consume_action_challenge(
+                "bulk_delete", "admin", str(challenge.get("batch_token") or "")
+            )
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("reviews", status=""))
 
         client = cli_factory()
         deleted = 0
@@ -527,7 +537,7 @@ def create_app(
         session["bulk_move_challenge"] = {
             "row_ids": row_ids,
             "target_key": target["key"],
-            "token": secrets.token_urlsafe(24),
+            "token": store.create_action_challenge("bulk_move", "admin", remote_ip()),
             "created_at": int(time.time()),
         }
         return redirect(url_for("confirm_bulk_move"))
@@ -581,6 +591,14 @@ def create_app(
             flash("请勾选栏目调整确认，并填写至少 4 个字符的调整理由。", "error")
             return redirect(url_for("confirm_bulk_move"))
         session.pop("bulk_move_challenge", None)
+
+        try:
+            store.consume_action_challenge(
+                "bulk_move", "admin", str(challenge.get("token") or "")
+            )
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("reviews", status=""))
 
         client = cli_factory()
         moved = 0
