@@ -383,7 +383,7 @@ class WebTests(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("已删除所选 2 条内容".encode("utf-8"), response.data)
+        self.assertIn("批量删除完成：成功 2 条、失败 0 条".encode("utf-8"), response.data)
         self.assertEqual(
             self.fake_cli.deleted,
             [

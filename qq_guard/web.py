@@ -508,7 +508,10 @@ def create_app(
         elif failed:
             flash(f"批量删除完成：成功 {deleted} 条、失败 {failed} 条。", "error")
         else:
-            flash(f"已删除所选 {deleted} 条内容，理由和平台结果均已记录。", "success")
+            flash(
+                f"批量删除完成：成功 {deleted} 条、失败 0 条。理由和平台结果均已记录。",
+                "success",
+            )
         return redirect(url_for("reviews", status=""))
 
     @app.post("/reviews/bulk-move/prepare")
