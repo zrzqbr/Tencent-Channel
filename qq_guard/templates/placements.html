@@ -1,0 +1,55 @@
+{% extends "base.html" %}
+{% block title %}栏目调整建议 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}栏目调整建议{% endblock %}
+{% block content %}
+<section class="info-banner">
+  <strong>AI 与规则只提出建议，管理员确认后才会移动原帖</strong>
+  <p>每周一问必须带 #话题；文章、问答与官方资讯会按内容特征和上下文判断。热门是平台排序页、精华是标记状态，不作为可移动的实体栏目。</p>
+</section>
+<section class="panel filter-panel">
+  <form method="get" class="filter-form">
+    <label>频道<select name="guild"><option value="">全部频道</option>{% for guild in guilds %}<option value="{{ guild.id }}" {{ 'selected' if guild.id == selected_guild }}>{{ guild.name }}</option>{% endfor %}</select></label>
+    <button class="primary-button compact" type="submit">筛选</button>
+    <span class="placement-total">共 {{ suggestion_count }} 条可调整建议</span>
+  </form>
+</section>
+
+{% for group in groups %}
+<section class="panel placement-group">
+  <div class="panel-title"><div><h2>建议移入：{{ group.target.guild_name }} · {{ group.target.label }}</h2><p>可勾选本组内容，核对后批量移动。</p></div><span class="pill">{{ group['items']|length }} 条</span></div>
+  <form action="{{ url_for('prepare_bulk_move') }}" method="post" data-bulk-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <input type="hidden" name="move_target" value="{{ group.target.key }}" data-move-target>
+    <div class="bulk-toolbar">
+      <label class="bulk-select-all"><input type="checkbox" data-select-all> 全选本组</label>
+      <span>已选择 <strong data-selected-count>0</strong> 条</span>
+      <button class="primary-button compact" type="submit" data-bulk-move disabled>审核并移动所选</button>
+      <button class="danger-button compact placement-hidden-delete" type="button" data-bulk-delete disabled aria-hidden="true">删除</button>
+      <small>每次最多 20 条；下一步仍需填写理由、输入管理密码并二次确认。</small>
+    </div>
+    <div class="table-wrap"><table>
+      <thead><tr><th>选择</th><th>内容</th><th>当前栏目</th><th>识别结论</th><th>建议目标</th><th>可核对理由</th></tr></thead>
+      <tbody>{% for item in group['items'] %}<tr>
+        <td><input type="checkbox" name="review_ids" value="{{ item.id }}" data-review-checkbox aria-label="选择 {{ item.title or item.item_id }}"></td>
+        <td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.guild_name }} · {{ item.item_id }}</small></td>
+        <td>{{ item.current_label }}<small class="subline">{{ item.channel_id }}</small></td>
+        <td><span class="pill">{{ item.detected_label }}</span><small class="subline">置信度 {{ '%.0f%%'|format((item.classification.get('confidence', 0)|float) * 100) }}</small></td>
+        <td><strong class="placement-target">→ {{ item.move_target.label }}</strong></td>
+        <td class="placement-reason">{{ item.placement_reason }}</td>
+      </tr>{% endfor %}</tbody>
+    </table></div>
+  </form>
+</section>
+{% else %}
+<section class="panel"><p class="empty tall">当前没有可直接建议目标栏目的错投内容。</p></section>
+{% endfor %}
+
+{% if attention %}
+<section class="panel">
+  <div class="panel-title"><div><h2>需人工判断</h2><p>这些内容违反每周一问的话题要求，但证据不足以自动建议其他栏目。</p></div><span class="pill">{{ attention|length }} 条</span></div>
+  <div class="table-wrap"><table><thead><tr><th>内容</th><th>当前栏目</th><th>问题</th><th>处理方式</th></tr></thead><tbody>
+  {% for item in attention %}<tr><td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a></td><td>{{ item.current_label }}</td><td>{{ item.attention_message }}</td><td>进入详情核对，或在“审核结果与审批”手工选择目标栏目。</td></tr>{% endfor %}
+  </tbody></table></div>
+</section>
+{% endif %}
+{% endblock %}

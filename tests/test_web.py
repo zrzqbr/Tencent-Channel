@@ -186,7 +186,7 @@ class WebTests(unittest.TestCase):
 
     def test_all_admin_pages_render_after_login(self):
         self.login()
-        for path in ["/reviews", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test"]:
+        for path in ["/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
@@ -486,6 +486,50 @@ class WebTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(rows, [("3", "practical_article", "approved")] * 2)
         self.assertEqual(audits, 2)
+
+    def test_placement_page_suggests_article_misposted_in_qa_board(self):
+        row_id = self.insert_tencent_review("feed-article", "完整的实战案例文章")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy", "guild_id": "1",
+            "channels": {"qa_discussion": "2", "practical_article": "3"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "2": {"name": "WorkBuddy·问答与交流", "expected_sections": ["qa_discussion"]},
+            "3": {"name": "WorkBuddy·实用文章", "expected_sections": ["practical_article", "featured"]},
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET section = 'practical_article', classification_json = ? WHERE id = ?",
+                (json.dumps({"section": "practical_article", "confidence": 0.91, "reasons": ["图文案例文章"], "hashtags": [], "validation_issues": []}), row_id),
+            )
+        self.login()
+        response = self.client.get("/placements")
+        self.assertIn("栏目调整建议".encode("utf-8"), response.data)
+        self.assertIn("建议移入：WorkBuddy · 实用文章".encode("utf-8"), response.data)
+        self.assertIn("图文案例文章".encode("utf-8"), response.data)
+        self.assertIn(f'value="{row_id}"'.encode(), response.data)
+
+    def test_weekly_without_hashtag_never_gets_weekly_move_recommendation(self):
+        row_id = self.insert_tencent_review("feed-weekly", "本周问题")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy", "guild_id": "1",
+            "channels": {"qa_discussion": "2", "weekly_question": "4"},
+            "poll_interval_seconds": 300,
+        }]
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET section = 'weekly_question', classification_json = ? WHERE id = ?",
+                (json.dumps({"section": "weekly_question", "confidence": 0.9, "reasons": ["每周一问语义"], "hashtags": [], "validation_issues": ["missing_weekly_hashtag"]}), row_id),
+            )
+        self.login()
+        response = self.client.get("/placements")
+        self.assertIn("缺少井号话题".encode("utf-8"), response.data)
+        self.assertNotIn(b'value="1:4:weekly_question"', response.data)
 
     def test_scan_runs_in_background_and_reports_progress(self):
         class Report:

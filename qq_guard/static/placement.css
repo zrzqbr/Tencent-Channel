@@ -1,0 +1,6 @@
+.placement-hint { color: #2868df !important; font-weight: 700; }
+.placement-total { margin-left: auto; color: #2868df; font-size: 13px; font-weight: 700; }
+.placement-target { color: #0b8f68; }
+.placement-reason { max-width: 360px; color: #5e6d83; line-height: 1.55; }
+.placement-hidden-delete { display: none !important; }
+.placement-group { border-left: 4px solid #3978e8; }

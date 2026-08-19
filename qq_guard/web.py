@@ -29,6 +29,7 @@ from .config import GuardConfig
 from .config_editor import ConfigEditor
 from .models import IncomingContent, ItemKind, Section
 from .moderation import ModerationEngine
+from .placement import group_placement_suggestions, placement_review
 from .scan_control import ScanLock, ScanStatusStore
 from .tencent_cli import TencentCliClient
 from .tencent_monitor import TencentChannelMonitor
@@ -255,14 +256,39 @@ def create_app(
         risk = request.args.get("risk", "")
         guild_id = request.args.get("guild", "")
         current = GuardConfig.from_file(str(resolved_config))
+        items = store.reviews(status=status, risk_level=risk, guild_id=guild_id)
+        suggestions, _ = placement_review(items, current)
+        suggestion_by_id = {item["id"]: item for item in suggestions}
+        for item in items:
+            if item["id"] in suggestion_by_id:
+                item["placement_suggestion"] = suggestion_by_id[item["id"]]
         return render_template(
             "reviews.html",
-            items=store.reviews(status=status, risk_level=risk, guild_id=guild_id),
+            items=items,
             selected_status=status,
             selected_risk=risk,
             selected_guild=guild_id,
             show_bulk_actions=True,
             move_targets=_configured_move_targets(current),
+        )
+
+    @app.get("/placements")
+    @login_required
+    def placements():
+        current = GuardConfig.from_file(str(resolved_config))
+        selected_guild = request.args.get("guild", "")
+        items = store.reviews(status="", guild_id=selected_guild, limit=500)
+        suggestions, attention = placement_review(items, current)
+        return render_template(
+            "placements.html",
+            groups=group_placement_suggestions(suggestions),
+            attention=attention,
+            suggestion_count=len(suggestions),
+            selected_guild=selected_guild,
+            guilds=[
+                {"id": settings.guild_id, "name": settings.name or settings.guild_id}
+                for settings in current.tencent_channels
+            ],
         )
 
     @app.get("/ai-analysis")
