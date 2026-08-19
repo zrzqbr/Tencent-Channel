@@ -9,7 +9,7 @@
 
 系统还包含可解释的内容审核层：中英文敏感词、联系方式、外链、低信息灌水、乱码、版块错投和人工复核队列。完整动作边界见 [审核与治理规则](docs/MODERATION_POLICY.md)，未来网页化可按 [管理后台设计基线](docs/ADMIN_BACKEND.md) 接入。
 
-频道管理后台的正式域名确定为 `https://tencent.ruitcarch.cloud`。DNS 已指向频道服务服务器；HTTPS 证书和独立 Nginx 站点启用前，该地址不作为可用入口。部署状态与上线检查项见 [部署与域名](docs/DEPLOYMENT.md)。
+频道管理后台的正式域名是 [tencent.ruitcarch.cloud](https://tencent.ruitcarch.cloud)。DNS、独立 Nginx 站点和自动续期 HTTPS 已启用；当前入口展示安全测试模式状态页，管理功能仍在接入。部署状态与上线检查项见 [部署与域名](docs/DEPLOYMENT.md)。
 
 “全部”和“热门”是展示视图，不作为内容分类。
 
