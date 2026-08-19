@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}AI 分析记录 · 腾讯频道内容治理后台{% endblock %}
+{% block heading %}AI 分析记录{% endblock %}
+{% block content %}
+{% if ai_status.status == 'ready' %}
+<section class="info-banner ai-ready-banner"><strong>Hy3 与 Youtu-VITA 已连接</strong><p>这里逐条展示规则初审、图片分析、语义综合判断、最终建议和可核对理由。</p></section>
+{% elif ai_status.status == 'missing_key' %}
+<section class="info-banner warning-banner"><strong>当前服务器缺少大模型 API 密钥，因此暂时没有真正的 AI 结论</strong><p>下方“规则判定”记录来自确定性规则初审，不会伪装成 Hy3 分析。配置密钥并重新巡检后，新记录才会出现模型摘要、置信度和图片证据。</p></section>
+{% else %}
+<section class="info-banner warning-banner"><strong>AI 审核当前未启用</strong><p>现有记录只展示规则初审与降级原因；系统不会把规则结果标记成 AI 结论。</p></section>
+{% endif %}
+
+<div class="metric-grid ai-metric-grid">
+  <article class="metric"><span>当前记录</span><strong>{{ metrics.total }}</strong><small>符合当前筛选</small></article>
+  <article class="metric success"><span>Hy3 已分析</span><strong>{{ metrics.ai }}</strong><small>有真实模型结论</small></article>
+  <article class="metric warning"><span>规则判定 / 降级</span><strong>{{ metrics.rules }}</strong><small>明确标出未执行原因</small></article>
+  <article class="metric purple"><span>VITA 已分析</span><strong>{{ metrics.vision }}</strong><small>有图片证据记录</small></article>
+</div>
+
+<section class="panel filter-panel">
+  <form method="get" class="filter-form">
+    <label>分析来源<select name="source"><option value="">全部</option><option value="ai" {{ 'selected' if selected_source == 'ai' }}>Hy3 已分析</option><option value="rules" {{ 'selected' if selected_source == 'rules' }}>规则判定 / 降级</option></select></label>
+    <label>风险等级<select name="risk"><option value="">全部</option>{% for key in ['critical','high','medium','low'] %}<option value="{{ key }}" {{ 'selected' if selected_risk == key }}>{{ risk_labels[key] }}</option>{% endfor %}</select></label>
+    <button class="primary-button compact" type="submit">筛选记录</button>
+  </form>
+</section>
+
+<section class="analysis-records">
+  {% for item in items %}
+  <article class="panel analysis-record">
+    <div class="analysis-record-head">
+      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'Hy3 已分析' if item.analysis_source == 'ai' else '规则判定' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|replace('T', ' ')|truncate(19, True, '') }}</p></div>
+      <span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 · {{ item.risk_score }}</span>
+    </div>
+    <div class="analysis-record-grid">
+      <div><span>规则初审</span><strong>已完成</strong><p>{{ item.reasons[0].message if item.reasons else '未发现明确规则风险' }}</p></div>
+      <div><span>Youtu-VITA</span><strong>{% if not item.media_urls %}无需执行（无图片）{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</strong><p>{{ item.ai_analysis.get('vision_analysis') or item.ai_analysis.get('vision_error') or '暂无图片分析证据' }}</p></div>
+      <div><span>Hy3 综合结论</span><strong>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</strong><p>{{ item.ai_analysis.get('summary') or item.ai_error or '本条没有执行大模型分析，当前仅保留规则判定。' }}</p></div>
+      <div><span>最终建议</span><strong>{{ action_labels.get(item.action, item.action) }}</strong><p>{{ status_labels.get(item.review_status, item.review_status) }} · {{ item.ai_model or '未调用模型' }}</p></div>
+    </div>
+    {% if item.reasons %}<div class="record-reasons">{% for reason in item.reasons[:3] %}<span>{{ reason.message }}{% if reason.evidence %}：{{ reason.evidence }}{% endif %}</span>{% endfor %}</div>{% endif %}
+    <a class="record-detail-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">查看全部证据并审批 →</a>
+  </article>
+  {% else %}<section class="panel empty tall">当前筛选条件下没有分析记录</section>{% endfor %}
+</section>
+{% endblock %}

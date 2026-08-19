@@ -11,10 +11,16 @@
   <section class="action-card" id="scan">
     <strong>立即同步频道内容</strong>
     <p>从两个频道读取最新内容并生成审核结果。只有同作者、同栏目、连续且完全相同的帖子可自动去重。</p>
-    <form action="{{ url_for('scan_now') }}" method="post">
+    <form action="{{ url_for('scan_now') }}" method="post" data-scan-form data-existing-job="{{ request.args.get('scan_job', '') }}">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="primary-button" type="submit">立即巡检</button>
+      <button class="primary-button" type="submit" data-scan-button>立即巡检</button>
     </form>
+    <div class="scan-progress" data-scan-progress hidden aria-live="polite">
+      <div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div>
+      <div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div>
+      <p data-scan-message>正在建立安全连接</p>
+      <a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮 AI 分析与审核记录</a>
+    </div>
   </section>
 </div>
 
@@ -34,12 +40,12 @@
       <p>只识别同作者、同栏目、连续且完全相同的内容。</p>
       <small>{{ summary.duplicates }} 条严格重复</small>
     </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('rules') }}">
+    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
       <span class="flow-number">03</span><strong>规则初审</strong>
       <p>检查栏目要求、敏感词、链接、联系方式和异常推广。</p>
       <small>策略 {{ config.moderation.policy_version }}</small>
     </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('rules') }}">
+    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
       <span class="flow-number">04</span><strong>Youtu-VITA 图片分析</strong>
       <p>有图片时识别画面、图片文字、二维码与视觉风险。</p>
       <small>{{ vision_status_labels.get(ai_status.vision_status, ai_status.vision_status) }}</small>
@@ -49,7 +55,7 @@
       <p>结合正文、图片结论、附近上下文和栏目规则综合判断。</p>
       <small>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</small>
     </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('reviews', status='') }}">
+    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
       <span class="flow-number">06</span><strong>生成审核结论</strong>
       <p>输出内容分类、风险等级、建议动作与可核对理由。</p>
       <small>{{ summary.total }} 条已进入治理</small>

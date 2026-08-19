@@ -1,5 +1,6 @@
 import json
 import os
+import secrets
 import threading
 import time
 from collections import defaultdict, deque
@@ -28,6 +29,7 @@ from .config import GuardConfig
 from .config_editor import ConfigEditor
 from .models import IncomingContent, ItemKind, Section
 from .moderation import ModerationEngine
+from .scan_control import ScanLock, ScanStatusStore
 from .tencent_cli import TencentCliClient
 from .tencent_monitor import TencentChannelMonitor
 
@@ -126,6 +128,7 @@ def create_app(
     store = AdminStore(guard_config.database_path)
     editor = ConfigEditor(resolved_config)
     limiter = LoginLimiter()
+    scan_status_store = ScanStatusStore(guard_config.database_path)
 
     def remote_ip() -> str:
         return str(request.remote_addr or "")[:80]
@@ -257,6 +260,39 @@ def create_app(
             selected_status=status,
             selected_risk=risk,
             selected_guild=guild_id,
+            show_bulk_actions=True,
+        )
+
+    @app.get("/ai-analysis")
+    @login_required
+    def ai_analysis():
+        selected_source = request.args.get("source", "")
+        if selected_source not in {"", "ai", "rules"}:
+            selected_source = ""
+        selected_risk = request.args.get("risk", "")
+        if selected_risk not in {"", "critical", "high", "medium", "low"}:
+            selected_risk = ""
+        items = store.reviews(status="", risk_level=selected_risk, limit=300)
+        if selected_source:
+            items = [item for item in items if item.get("analysis_source") == selected_source]
+        current = GuardConfig.from_file(str(resolved_config))
+        ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
+        metrics = {
+            "total": len(items),
+            "ai": sum(item.get("analysis_source") == "ai" for item in items),
+            "rules": sum(item.get("analysis_source") != "ai" for item in items),
+            "vision": sum(
+                item.get("ai_analysis", {}).get("vision_status") in {"completed", "cached"}
+                for item in items
+            ),
+        }
+        return render_template(
+            "ai_analysis.html",
+            items=items,
+            ai_status=ai_status,
+            metrics=metrics,
+            selected_source=selected_source,
+            selected_risk=selected_risk,
         )
 
     @app.get("/reviews/<source>/<int:row_id>")
@@ -330,20 +366,8 @@ def create_app(
                 raise ValueError("删除确认已失效，请重新发起")
             store.consume_delete_challenge(row_id, "admin", str(challenge.get("token") or ""))
             item = store.get_review("tencent", row_id)
-            create_time = str(item.get("source_created_at") or "").strip()
             client = cli_factory()
-            if not create_time.isdigit():
-                detail = client.get_feed_detail(item["guild_id"], item["channel_id"], item["item_id"])
-                create_time = str(detail.get("create_time_raw") or detail.get("create_time") or "")
-            if not create_time.isdigit():
-                raise ValueError("无法确认原帖发布时间，为防止误删已停止操作")
-            client.delete_feed(
-                item["guild_id"],
-                item["channel_id"],
-                item["item_id"],
-                create_time,
-                live=True,
-            )
+            _delete_tencent_item(client, item)
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"[:500]
             store.record_delete_result(row_id, "admin", "failed", message, reason, remote_ip())
@@ -352,6 +376,126 @@ def create_app(
             store.record_delete_result(row_id, "admin", "deleted", "", reason, remote_ip())
             flash("内容已删除，平台结果和删除理由均已记录。", "success")
         return redirect(url_for("review_detail", source="tencent", row_id=row_id))
+
+    @app.post("/reviews/bulk-delete/prepare")
+    @login_required
+    def prepare_bulk_delete():
+        if not manual_delete_enabled():
+            flash("服务器尚未启用人工删除能力。", "error")
+            return redirect(url_for("reviews"))
+        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
+        if not row_ids:
+            flash("请先勾选要删除的内容。", "error")
+            return redirect(url_for("reviews"))
+        if len(row_ids) > 20:
+            flash("为避免误操作，每次最多删除 20 条内容。", "error")
+            return redirect(url_for("reviews"))
+        try:
+            items = [store.get_review("tencent", row_id) for row_id in row_ids]
+            for item in items:
+                if item.get("delete_status") == "deleted":
+                    raise ValueError(f"内容 {item['item_id']} 已经删除")
+            challenges = {
+                str(row_id): store.create_delete_challenge(row_id, "admin", remote_ip())
+                for row_id in row_ids
+            }
+        except ValueError as exc:
+            flash(str(exc), "error")
+            return redirect(url_for("reviews"))
+        session["bulk_delete_challenge"] = {
+            "row_ids": row_ids,
+            "tokens": challenges,
+            "created_at": int(time.time()),
+        }
+        return redirect(url_for("confirm_bulk_delete"))
+
+    @app.get("/reviews/bulk-delete/confirm")
+    @login_required
+    def confirm_bulk_delete():
+        challenge = session.get("bulk_delete_challenge") or {}
+        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
+        if not row_ids or int(challenge.get("created_at") or 0) < int(time.time()) - 600:
+            session.pop("bulk_delete_challenge", None)
+            flash("批量删除确认已失效，请重新勾选。", "error")
+            return redirect(url_for("reviews"))
+        try:
+            items = [store.get_review("tencent", row_id) for row_id in row_ids]
+        except ValueError:
+            abort(404)
+        return render_template(
+            "bulk_confirm_delete.html",
+            items=items,
+            confirmation_text=f"删除 {len(items)} 条",
+        )
+
+    @app.post("/reviews/bulk-delete")
+    @login_required
+    def execute_bulk_delete():
+        challenge = session.pop("bulk_delete_challenge", {}) or {}
+        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
+        tokens = challenge.get("tokens") or {}
+        password = request.form.get("password", "")
+        confirmation = request.form.get("confirmation", "").strip()
+        reason = request.form.get("reason", "").strip()[:1000]
+        expected_confirmation = f"删除 {len(row_ids)} 条"
+        if not manual_delete_enabled():
+            flash("服务器尚未启用人工删除能力。", "error")
+            return redirect(url_for("reviews"))
+        if not row_ids or int(challenge.get("created_at") or 0) < int(time.time()) - 600:
+            flash("批量删除确认已失效，请重新勾选。", "error")
+            return redirect(url_for("reviews"))
+        if not check_password_hash(password_hash, password):
+            store.record_audit(
+                "admin",
+                "delete.bulk_reauth_failed",
+                "tencent",
+                ",".join(str(value) for value in row_ids),
+                {"count": len(row_ids)},
+                remote_ip(),
+            )
+            flash("管理员密码验证失败，未执行任何删除。", "error")
+            return redirect(url_for("reviews"))
+        if confirmation != expected_confirmation or len(reason) < 4:
+            flash(f"请输入“{expected_confirmation}”，并填写至少 4 个字符的删除理由。", "error")
+            return redirect(url_for("reviews"))
+
+        client = cli_factory()
+        deleted = 0
+        failed = 0
+        stopped_for_rate_limit = False
+        for row_id in row_ids:
+            try:
+                store.consume_delete_challenge(
+                    row_id, "admin", str(tokens.get(str(row_id)) or "")
+                )
+                item = store.get_review("tencent", row_id)
+                _delete_tencent_item(client, item)
+            except Exception as exc:
+                message = f"{type(exc).__name__}: {exc}"[:500]
+                store.record_delete_result(
+                    row_id, "admin", "failed", message, reason, remote_ip()
+                )
+                failed += 1
+                if _is_rate_limit_error(exc):
+                    stopped_for_rate_limit = True
+                    break
+            else:
+                store.record_delete_result(
+                    row_id, "admin", "deleted", "", reason, remote_ip()
+                )
+                deleted += 1
+
+        untouched = len(row_ids) - deleted - failed
+        if stopped_for_rate_limit:
+            flash(
+                f"批量删除已因平台频率限制停止：成功 {deleted} 条、失败 {failed} 条、未执行 {untouched} 条。",
+                "error",
+            )
+        elif failed:
+            flash(f"批量删除完成：成功 {deleted} 条、失败 {failed} 条。", "error")
+        else:
+            flash(f"已删除所选 {deleted} 条内容，理由和平台结果均已记录。", "success")
+        return redirect(url_for("reviews", status=""))
 
     @app.get("/duplicates")
     @login_required
@@ -562,23 +706,86 @@ def create_app(
     @app.post("/scan")
     @login_required
     def scan_now():
-        try:
-            current = GuardConfig.from_file(str(resolved_config))
-            report = TencentChannelMonitor(current, cli_factory()).scan_once()
-            summary = report.public_summary()
-            store.record_audit(
-                "admin",
-                "scan.run",
-                "tencent",
-                "all",
-                {"scanned_feeds": summary["scanned_feeds"], "duplicates": summary["duplicates"]},
-                remote_ip(),
-            )
-            flash(f"巡检完成：检查 {summary['scanned_feeds']} 条内容。", "success")
-        except Exception as exc:
-            store.record_audit("admin", "scan.failed", "tencent", "all", {"error": str(exc)[:500]}, remote_ip())
-            flash(f"巡检失败：{exc}", "error")
-        return redirect(url_for("dashboard"))
+        current = GuardConfig.from_file(str(resolved_config))
+        lease = ScanLock(current.database_path)
+        if not lease.acquire():
+            message = "已有一轮巡检正在运行，请等待进度完成后再试。"
+            if _wants_json():
+                return jsonify({"ok": False, "status": "busy", "message": message}), 409
+            flash(message, "error")
+            return redirect(url_for("dashboard"))
+
+        job_id = secrets.token_urlsafe(18)
+        requester_ip = remote_ip()
+        scan_status_store.start(job_id)
+
+        def run_scan() -> None:
+            try:
+                monitor = TencentChannelMonitor(
+                    current,
+                    cli_factory(),
+                    progress_callback=lambda percent, phase, message: scan_status_store.update(
+                        job_id,
+                        percent=percent,
+                        phase=phase,
+                        message=message,
+                    ),
+                )
+                report = monitor.scan_once()
+                summary = report.public_summary()
+                store.record_audit(
+                    "admin",
+                    "scan.run",
+                    "tencent",
+                    "all",
+                    {
+                        "job_id": job_id,
+                        "scanned_feeds": summary["scanned_feeds"],
+                        "duplicates": summary["duplicates"],
+                    },
+                    requester_ip,
+                )
+                scan_status_store.complete(job_id, summary)
+            except Exception as exc:
+                store.record_audit(
+                    "admin",
+                    "scan.failed",
+                    "tencent",
+                    "all",
+                    {"job_id": job_id, "error": str(exc)[:500]},
+                    requester_ip,
+                )
+                scan_status_store.fail(job_id, str(exc))
+            finally:
+                lease.release()
+
+        threading.Thread(
+            target=run_scan,
+            name=f"qq-guard-scan-{job_id[:8]}",
+            daemon=True,
+        ).start()
+        if _wants_json():
+            return jsonify(
+                {
+                    "ok": True,
+                    "status": "running",
+                    "job_id": job_id,
+                    "status_url": url_for("scan_status", job_id=job_id),
+                }
+            ), 202
+        flash("巡检已开始，可在工作台查看进度。", "success")
+        return redirect(url_for("dashboard", scan_job=job_id))
+
+    @app.get("/scan/status/<job_id>")
+    @login_required
+    def scan_status(job_id: str):
+        if not job_id or len(job_id) > 80:
+            abort(404)
+        state = scan_status_store.read(job_id)
+        if state is None:
+            abort(404)
+        state["results_url"] = url_for("ai_analysis")
+        return jsonify(state)
 
     return app
 
@@ -598,6 +805,48 @@ def safe_next(value: str) -> str:
 
 def manual_delete_enabled() -> bool:
     return os.environ.get("QQ_GUARD_MANUAL_DELETE_ENABLED", "false").casefold() == "true"
+
+
+def _selected_row_ids(values) -> list:
+    row_ids = []
+    for value in values:
+        try:
+            row_id = int(value)
+        except (TypeError, ValueError):
+            continue
+        if row_id > 0 and row_id not in row_ids:
+            row_ids.append(row_id)
+    return row_ids
+
+
+def _delete_tencent_item(client: TencentCliClient, item: Dict[str, Any]) -> None:
+    create_time = str(item.get("source_created_at") or "").strip()
+    if not create_time.isdigit():
+        detail = client.get_feed_detail(
+            item["guild_id"], item["channel_id"], item["item_id"]
+        )
+        create_time = str(detail.get("create_time_raw") or detail.get("create_time") or "")
+    if not create_time.isdigit():
+        raise ValueError("无法确认原帖发布时间，为防止误删已停止操作")
+    client.delete_feed(
+        item["guild_id"],
+        item["channel_id"],
+        item["item_id"],
+        create_time,
+        live=True,
+    )
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    message = str(exc).casefold()
+    return "retcode=153" in message or "频率上限" in message or "rate limit" in message
+
+
+def _wants_json() -> bool:
+    return (
+        request.headers.get("X-Requested-With") == "XMLHttpRequest"
+        or request.accept_mimetypes.best == "application/json"
+    )
 
 
 def main() -> None:

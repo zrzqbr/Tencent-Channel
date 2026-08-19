@@ -7,6 +7,7 @@ from .classifier import ContentClassifier
 from .config import GuardConfig
 from .models import IncomingContent, ItemKind
 from .moderation import ModerationEngine
+from .scan_control import ScanLock
 from .service import DryRunDeleteAdapter, GuardService
 from .storage import AuditStore
 from .tencent_cli import TencentCliClient
@@ -106,7 +107,11 @@ def main() -> None:
     if args.command in {"tencent-scan", "tencent-monitor"}:
         monitor = TencentChannelMonitor(config, TencentCliClient())
         if args.command == "tencent-scan":
-            print(json.dumps(monitor.scan_once().public_summary(), ensure_ascii=False, indent=2))
+            with ScanLock(config.database_path) as acquired:
+                if not acquired:
+                    raise RuntimeError("已有一轮腾讯频道巡检正在运行")
+                report = monitor.scan_once()
+            print(json.dumps(report.public_summary(), ensure_ascii=False, indent=2))
         else:
             monitor.run_forever()
         return

@@ -6,13 +6,14 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
+from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
 from .ai_review import AIReviewClient, AIReviewUnavailable, fuse_ai_review
 from .classifier import ContentClassifier
 from .config import GuardConfig, TencentChannelSettings
 from .models import IncomingContent, ItemKind, PolicyReason, Section
 from .moderation import ModerationEngine
+from .scan_control import ScanLock
 
 
 class TencentFeedApi(Protocol):
@@ -159,6 +160,7 @@ class TencentChannelMonitor:
         config: GuardConfig,
         api: TencentFeedApi,
         ai_client: Optional[AIReviewClient] = None,
+        progress_callback: Optional[Callable[[int, str, str], None]] = None,
     ) -> None:
         settings = config.tencent_channels or (
             (config.tencent_channel,) if config.tencent_channel is not None else ()
@@ -173,11 +175,13 @@ class TencentChannelMonitor:
         self.database_path = Path(config.database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.ai_client = ai_client or AIReviewClient(config.ai_review, self.database_path)
+        self.progress_callback = progress_callback
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
         self._initialize_audit()
 
     def scan_once(self) -> ScanReport:
+        self._progress(5, "连接频道", "正在读取频道和栏目配置")
         started_at = _utc_now()
         total = 0
         weekly_missing = 0
@@ -188,11 +192,22 @@ class TencentChannelMonitor:
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
 
+        work_units = sum(
+            len(settings.channels) + len(settings.auto_classify_channels)
+            for settings in self.settings
+        )
+        completed_units = 0
+
         for settings in self.settings:
             guild_label = settings.name or settings.guild_id
             guild_names.append(guild_label)
 
             for section, channel_id in settings.channels.items():
+                self._progress(
+                    10 + int(75 * completed_units / max(work_units, 1)),
+                    "读取并分析内容",
+                    f"正在处理 {guild_label} · {section.display_name}",
+                )
                 feeds = self._list_feeds(settings, channel_id)
                 total += len(feeds)
                 details: Dict[str, Dict[str, Any]] = {}
@@ -224,8 +239,14 @@ class TencentChannelMonitor:
                             settings, channel_id, detected_section, section_feeds, details
                         )
                     )
+                completed_units += 1
 
             for _channel_name, channel_id in settings.auto_classify_channels.items():
+                self._progress(
+                    10 + int(75 * completed_units / max(work_units, 1)),
+                    "读取并分析内容",
+                    f"正在处理 {guild_label} · {_channel_name}",
+                )
                 feeds = self._list_feeds(settings, channel_id)
                 total += len(feeds)
                 details: Dict[str, Dict[str, Any]] = {}
@@ -262,7 +283,9 @@ class TencentChannelMonitor:
                             details,
                         )
                     )
+                completed_units += 1
 
+        self._progress(88, "确定性去重", "正在汇总严格重复项与栏目判定")
         report = ScanReport(
             scanned_feeds=total,
             duplicate_findings=tuple(findings),
@@ -277,14 +300,29 @@ class TencentChannelMonitor:
             ai_fallbacks=self._ai_fallbacks,
             ai_model=self.config.ai_review.model if self.config.ai_review.enabled else "",
         )
+        self._progress(95, "保存审核结果", "正在写入分类、风险、AI 状态与判定理由")
         self._record_scan(report)
         return report
 
     def run_forever(self) -> None:
         while True:
-            report = self.scan_once()
-            print(json.dumps(report.public_summary(), ensure_ascii=False), flush=True)
+            with ScanLock(self.database_path) as acquired:
+                if acquired:
+                    report = self.scan_once()
+                    print(json.dumps(report.public_summary(), ensure_ascii=False), flush=True)
+                else:
+                    print(
+                        json.dumps(
+                            {"status": "skipped", "reason": "scan_already_running"},
+                            ensure_ascii=False,
+                        ),
+                        flush=True,
+                    )
             time.sleep(min(settings.poll_interval_seconds for settings in self.settings))
+
+    def _progress(self, percent: int, phase: str, message: str) -> None:
+        if self.progress_callback is not None:
+            self.progress_callback(percent, phase, message)
 
     def _list_feeds(
         self, settings: TencentChannelSettings, channel_id: str

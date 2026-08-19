@@ -29,7 +29,7 @@ class TencentChannelSettings:
     channels: Mapping[Section, str] = field(default_factory=dict)
     auto_classify_channels: Mapping[str, str] = field(default_factory=dict)
     scan_count: int = 20
-    poll_interval_seconds: int = 60
+    poll_interval_seconds: int = 300
 
 
 @dataclass(frozen=True)
@@ -219,7 +219,7 @@ def _parse_tencent_settings(values: Mapping[str, object], path: str) -> TencentC
         channels=configured_channels,
         auto_classify_channels=auto_channels,
         scan_count=max(2, min(int(values.get("scan_count", 20)), 100)),
-        poll_interval_seconds=max(30, int(values.get("poll_interval_seconds", 60))),
+        poll_interval_seconds=max(30, int(values.get("poll_interval_seconds", 300))),
     )
 
 

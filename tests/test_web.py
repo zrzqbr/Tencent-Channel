@@ -3,6 +3,7 @@ import os
 import re
 import sqlite3
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -10,6 +11,7 @@ from unittest.mock import patch
 from werkzeug.security import generate_password_hash
 
 from qq_guard.admin_store import AdminStore
+from qq_guard.scan_control import ScanLock
 from qq_guard.web import create_app
 
 
@@ -122,7 +124,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("治理总览".encode("utf-8"), response.data)
         return response
 
-    def insert_tencent_review(self) -> int:
+    def insert_tencent_review(self, feed_id="feed-1", title="违规测试") -> int:
         AdminStore(self.database_path)
         with sqlite3.connect(str(self.database_path)) as connection:
             cursor = connection.execute(
@@ -132,12 +134,16 @@ class WebTests(unittest.TestCase):
                  risk_level, risk_score, policy_version, reasons_json, review_status,
                  author_id, body, media_urls_json, source_created_at, classification_json,
                  delete_status, created_at)
-                VALUES ('1', '测试频道', '2', 'feed-1', '违规测试', 'qa_discussion',
+                VALUES ('1', '测试频道', '2', ?, ?, 'qa_discussion',
                         'delete_candidate', 'high', 80, '2026-08-19.1', ?, 'pending',
                         'author', 'casino', '[]', '123456', '{}', 'not_requested',
                         '2026-08-19T00:00:00+00:00')
                 """,
-                (json.dumps([{"code": "sensitive_term_en", "message": "命中英文敏感词", "score": 80}]),),
+                (
+                    feed_id,
+                    title,
+                    json.dumps([{"code": "sensitive_term_en", "message": "命中英文敏感词", "score": 80}]),
+                ),
             )
             return int(cursor.lastrowid)
 
@@ -172,7 +178,7 @@ class WebTests(unittest.TestCase):
 
     def test_all_admin_pages_render_after_login(self):
         self.login()
-        for path in ["/reviews", "/duplicates", "/rules", "/channels", "/audit", "/test"]:
+        for path in ["/reviews", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
@@ -270,6 +276,16 @@ class WebTests(unittest.TestCase):
         self.assertIn("Youtu-VITA 图片分析".encode("utf-8"), response.data)
         self.assertIn("Hy3 综合判断".encode("utf-8"), response.data)
 
+    def test_ai_analysis_page_exposes_conclusion_or_fallback_reason(self):
+        self.insert_tencent_review()
+        self.login()
+        response = self.client.get("/ai-analysis")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("AI 分析记录".encode("utf-8"), response.data)
+        self.assertIn("规则判定".encode("utf-8"), response.data)
+        self.assertIn("本条没有执行大模型分析".encode("utf-8"), response.data)
+        self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
+
     def test_delete_requires_second_confirmation_and_reauthentication(self):
         row_id = self.insert_tencent_review()
         response = self.login()
@@ -320,6 +336,114 @@ class WebTests(unittest.TestCase):
         )
         self.assertIn("密码验证失败".encode("utf-8"), response.data)
         self.assertEqual(self.fake_cli.deleted, [])
+
+    def test_bulk_delete_requires_selection_and_second_confirmation(self):
+        first = self.insert_tencent_review("feed-1", "违规内容一")
+        second = self.insert_tencent_review("feed-2", "违规内容二")
+        response = self.login()
+        response = self.client.post(
+            "/reviews/bulk-delete/prepare",
+            data={
+                "csrf_token": self.csrf(response),
+                "review_ids": [str(first), str(second)],
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("将真实删除 2 条".encode("utf-8"), response.data)
+        response = self.client.post(
+            "/reviews/bulk-delete",
+            data={
+                "csrf_token": self.csrf(response),
+                "password": TEST_PASSWORD,
+                "confirmation": "删除 2 条",
+                "reason": "两条均命中明确违规规则",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("已删除所选 2 条内容".encode("utf-8"), response.data)
+        self.assertEqual(
+            self.fake_cli.deleted,
+            [
+                ("1", "2", "feed-1", "123456", True),
+                ("1", "2", "feed-2", "123456", True),
+            ],
+        )
+
+    def test_bulk_delete_wrong_password_deletes_nothing(self):
+        row_id = self.insert_tencent_review()
+        response = self.login()
+        response = self.client.post(
+            "/reviews/bulk-delete/prepare",
+            data={"csrf_token": self.csrf(response), "review_ids": [str(row_id)]},
+            follow_redirects=True,
+        )
+        response = self.client.post(
+            "/reviews/bulk-delete",
+            data={
+                "csrf_token": self.csrf(response),
+                "password": "wrong",
+                "confirmation": "删除 1 条",
+                "reason": "不应执行任何删除",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("未执行任何删除".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.deleted, [])
+
+    def test_scan_runs_in_background_and_reports_progress(self):
+        class Report:
+            def public_summary(self):
+                return {
+                    "scanned_feeds": 7,
+                    "duplicates": 1,
+                    "ai_reviewed": 2,
+                    "ai_fallbacks": 0,
+                }
+
+        class Monitor:
+            def __init__(self, config, client, progress_callback=None):
+                self.progress_callback = progress_callback
+
+            def scan_once(self):
+                self.progress_callback(40, "规则初审", "正在检查敏感词")
+                self.progress_callback(95, "保存审核结果", "正在写入记录")
+                return Report()
+
+        response = self.login()
+        with patch("qq_guard.web.TencentChannelMonitor", Monitor):
+            response = self.client.post(
+                "/scan",
+                data={"csrf_token": self.csrf(response)},
+                headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+            )
+            self.assertEqual(response.status_code, 202)
+            status_url = response.get_json()["status_url"]
+            state = None
+            for _ in range(30):
+                state = self.client.get(status_url).get_json()
+                if state["status"] != "running":
+                    break
+                time.sleep(0.01)
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["percent"], 100)
+        self.assertEqual(state["summary"]["scanned_feeds"], 7)
+
+    def test_scan_rejects_overlapping_run(self):
+        response = self.login()
+        lock = ScanLock(self.database_path)
+        self.assertTrue(lock.acquire())
+        try:
+            response = self.client.post(
+                "/scan",
+                data={"csrf_token": self.csrf(response)},
+                headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+            )
+        finally:
+            lock.release()
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.get_json()["status"], "busy")
 
 
 if __name__ == "__main__":

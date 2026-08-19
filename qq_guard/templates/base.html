@@ -24,6 +24,9 @@
           <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete'] }}" href="{{ url_for('reviews') }}">
             <span>审核结果与审批</span><small>规则、VITA、Hy3 与终审</small>
           </a>
+          <a class="nav-link {{ 'active' if request.endpoint == 'ai_analysis' }}" href="{{ url_for('ai_analysis') }}">
+            <span>AI 分析记录</span><small>每条结论、证据与降级原因</small>
+          </a>
           <a class="nav-link {{ 'active' if request.endpoint == 'duplicates' }}" href="{{ url_for('duplicates') }}">
             <span>严格去重</span><small>连续完全相同内容</small>
           </a>

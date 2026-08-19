@@ -15,6 +15,15 @@
   </form>
 </section>
 <section class="panel">
-  {% set reviews = items %}{% include "partials/review_table.html" %}
+  <form action="{{ url_for('prepare_bulk_delete') }}" method="post" data-bulk-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="bulk-toolbar">
+      <label class="bulk-select-all"><input type="checkbox" data-select-all> 全选本页可删除内容</label>
+      <span>已选择 <strong data-selected-count>0</strong> 条</span>
+      <button class="danger-button compact" type="submit" data-bulk-delete disabled>删除所选</button>
+      <small>{% if manual_delete_enabled %}每次最多 20 条，提交后仍需密码、理由和二次确认。{% else %}服务器尚未开启真实人工删除。{% endif %}</small>
+    </div>
+    {% set reviews = items %}{% include "partials/review_table.html" %}
+  </form>
 </section>
 {% endblock %}
