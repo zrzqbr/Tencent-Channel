@@ -658,6 +658,27 @@ class TencentChannelMonitor:
             for reason in finding.reasons
         ]
         with sqlite3.connect(str(self.database_path)) as connection:
+            now = _utc_now()
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET review_status = 'superseded',
+                    reviewed_by = 'system',
+                    reviewed_at = ?,
+                    review_notes = ?
+                WHERE guild_id = ?
+                  AND feed_id = ?
+                  AND policy_version <> ?
+                  AND review_status = 'pending'
+                """,
+                (
+                    now,
+                    f"由策略版本 {finding.policy_version} 的新检测结果替代",
+                    finding.guild_id,
+                    finding.feed_id,
+                    finding.policy_version,
+                ),
+            )
             connection.execute(
                 """
                 INSERT INTO tencent_moderation_findings
@@ -699,7 +720,7 @@ class TencentChannelMonitor:
                     json.dumps(finding.media_urls, ensure_ascii=False),
                     finding.source_created_at,
                     finding.classification_json,
-                    _utc_now(),
+                    now,
                 ),
             )
 

@@ -49,13 +49,21 @@ class TencentMonitorTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
-    def config(self, delete_mode="dry_run", auto_delete_duplicates=False):
+    def config(
+        self,
+        delete_mode="dry_run",
+        auto_delete_duplicates=False,
+        policy_version="test.1",
+    ):
         self.config_path.write_text(
             json.dumps(
                 {
                     "database_path": "audit.sqlite3",
                     "delete_mode": delete_mode,
                     "auto_delete_duplicates": auto_delete_duplicates,
+                    "moderation": {
+                        "policy_version": policy_version,
+                    },
                     "tencent_channel": {
                         "enabled": True,
                         "guild_id": "100",
@@ -234,6 +242,32 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertIn("sensitive_term_en", [reason.code for reason in finding.reasons])
         self.assertIn(finding.action, {"review", "delete_candidate"})
         self.assertEqual(api.deletions, [])
+
+    def test_new_policy_supersedes_old_pending_finding_for_same_feed(self):
+        feeds = {
+            "200": [self.feed("B_sensitive", "u1", "sb", "sb", 10)],
+            "201": [],
+        }
+        details = {"B_sensitive": self.detail("sb", "sb")}
+        api = FakeTencentApi(feeds, details)
+
+        TencentChannelMonitor(self.config(policy_version="test.1"), api).scan_once()
+        TencentChannelMonitor(self.config(policy_version="test.2"), api).scan_once()
+
+        import sqlite3
+
+        database_path = Path(self.temp_dir.name) / "audit.sqlite3"
+        with sqlite3.connect(database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT policy_version, review_status
+                FROM tencent_moderation_findings
+                WHERE guild_id = '100' AND feed_id = 'B_sensitive'
+                ORDER BY policy_version
+                """
+            ).fetchall()
+
+        self.assertEqual(rows, [("test.1", "superseded"), ("test.2", "pending")])
 
 
 if __name__ == "__main__":
