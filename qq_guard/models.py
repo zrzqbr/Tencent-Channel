@@ -85,6 +85,25 @@ class ModerationAssessment:
 
 
 @dataclass(frozen=True)
+class AIReviewDecision:
+    section: Section
+    classification_confidence: float
+    risk_level: RiskLevel
+    risk_score: int
+    recommended_action: ModerationAction
+    summary: str
+    reasons: Tuple[PolicyReason, ...] = field(default_factory=tuple)
+    provider: str = "tencent_tokenhub"
+    model: str = ""
+    vision_model: str = ""
+    vision_analysis: str = ""
+    vision_status: str = "not_requested"
+    prompt_version: str = ""
+    status: str = "completed"
+    error: str = ""
+
+
+@dataclass(frozen=True)
 class DuplicateCheck:
     event_row_id: int
     is_duplicate: bool

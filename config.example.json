@@ -36,5 +36,19 @@
       {"term": "blockedword", "language": "en", "category": "custom", "severity": "high", "action": "delete_candidate", "match_type": "word"}
     ]
   },
+  "ai_review": {
+    "enabled": false,
+    "provider": "tencent_tokenhub",
+    "model": "hy3",
+    "vision_model": "youtu-vita",
+    "prompt_version": "2026-08-19.ai2",
+    "vision_prompt_version": "2026-08-19.vision1",
+    "timeout_seconds": 30,
+    "vision_timeout_seconds": 45,
+    "max_input_chars": 12000,
+    "minimum_allow_confidence": 0.8,
+    "include_images": true,
+    "max_images": 3
+  },
   "tencent_channels": []
 }

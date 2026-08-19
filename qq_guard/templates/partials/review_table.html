@@ -7,7 +7,7 @@
       <td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ item.channel_id }}</small></td>
       <td><span class="pill">{{ section_labels.get(item.section, item.section) }}</span></td>
       <td><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</span></td>
-      <td>{{ action_labels.get(item.action, item.action) }}</td>
+      <td>{{ action_labels.get(item.action, item.action) }}<small class="subline">{{ 'AI 语义审核' if item.analysis_source == 'ai' else '规则降级' }}</small></td>
       <td>{{ status_labels.get(item.review_status, item.review_status) }}</td>
     </tr>
     {% else %}<tr><td colspan="6" class="empty">当前没有待审核内容</td></tr>{% endfor %}

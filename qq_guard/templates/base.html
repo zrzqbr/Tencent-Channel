@@ -18,15 +18,15 @@
         <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">总览</a>
         <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete'] }}" href="{{ url_for('reviews') }}">审核队列</a>
         <a class="nav-link {{ 'active' if request.endpoint == 'duplicates' }}" href="{{ url_for('duplicates') }}">去重记录</a>
-        <a class="nav-link {{ 'active' if request.endpoint == 'rules' }}" href="{{ url_for('rules') }}">规则与敏感词</a>
+        <a class="nav-link {{ 'active' if request.endpoint == 'rules' }}" href="{{ url_for('rules') }}">AI 审核策略</a>
         <a class="nav-link {{ 'active' if request.endpoint == 'channels' }}" href="{{ url_for('channels') }}">频道与版块</a>
         <a class="nav-link {{ 'active' if request.endpoint == 'test_content' }}" href="{{ url_for('test_content') }}">内容测试</a>
         <a class="nav-link {{ 'active' if request.endpoint == 'audit' }}" href="{{ url_for('audit') }}">操作审计</a>
       </nav>
       <div class="safety-card">
         <span class="status-dot"></span>
-        <strong>安全测试模式</strong>
-        <p>自动删除关闭。人工删除需要密码和二次确认。</p>
+        <strong>人工终审模式</strong>
+        <p>仅严格连续重复可自动去重；其他删除需要管理员二次确认。</p>
       </div>
       <form action="{{ url_for('logout') }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">

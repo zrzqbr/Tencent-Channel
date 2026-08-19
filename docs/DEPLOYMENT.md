@@ -12,15 +12,17 @@
 - 独立 Nginx 站点已启用；HTTP 会跳转到同一子域名的 HTTPS，不会跳转到峰会官网。
 - Let's Encrypt HTTPS 证书已签发，有效期至 2026-11-17；Certbot 自动续期定时器和模拟续期均验证成功。
 - 密码登录管理后台已上线，由 Gunicorn 监听 `127.0.0.1:8787`，Nginx 负责 HTTPS 和反向代理。
-- 后台服务单元为 `qq-channel-admin.service`；持续只读巡检单元为 `qq-channel-monitor.service`。
+- 后台服务单元为 `qq-channel-admin.service`；持续巡检单元为 `qq-channel-monitor.service`。
 - 可使用 `https://tencent.ruitcarch.cloud/healthz` 检查应用状态，正常返回 JSON `{"status":"ok"}`。
-- 内容审核与删除继续保持 `dry_run`，域名配置不会开启真实删帖。
+- 普通审核内容只进入管理员审批，不自动删除；严格连续重复去重可独立开启。
+- AI 使用广州站 TokenHub：Hy3 负责语义终审建议，Youtu-VITA 负责图片理解。
 
 ## 上线前必须完成
 
 1. 腾讯官方频道 CLI 需要在服务器服务账号下单独扫码授权，凭据只保存在服务器。
 2. 后续如增加审核员账号，应拆分管理员与审核员权限；当前仅提供单一管理员入口。
 3. 真实自动删帖仍需单独修改 `delete_mode` 和对应自动删除开关，不与网页上线联动。
+4. 在 `/etc/tencent-channel.env` 中配置 `TENCENT_TOKENHUB_API_KEY`，并在 TokenHub 控制台开通 `hy3` 与 `youtu-vita`；密钥不得进入仓库或网页配置。
 
 ## 验收标准
 
@@ -28,4 +30,4 @@
 - HTTP 自动跳转到同一子域名的 HTTPS，不跳转到峰会官网。
 - 未登录用户不能读取频道内容、审核结果或策略配置。
 - 所有分类、审核、去重和删除动作均保留理由、策略版本、操作者和时间。
-- 删除开关默认关闭，测试环境只能产生 `detected_only` 或 `dry_run` 记录。
+- 普通违规自动删除保持关闭；严格连续重复只有在独立开关启用后才可删除，测试环境仍只能产生 `detected_only` 或 `dry_run` 记录。

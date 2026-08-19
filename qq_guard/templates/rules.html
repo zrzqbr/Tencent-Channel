@@ -2,6 +2,19 @@
 {% block title %}规则与敏感词 · 腾讯频道内容治理后台{% endblock %}
 {% block heading %}规则与敏感词{% endblock %}
 {% block content %}
+<section class="panel">
+  <div class="panel-title"><div><h2>腾讯云 AI 双模型审核</h2><p>Youtu-VITA 先理解图片，混元 Hy3 再结合全文、相邻内容和版块规则给出结论</p></div><span class="mode-badge"><i></i>{{ {'ready':'已连接','missing_key':'等待 API 密钥','disabled':'未启用'}.get(ai_status.status, ai_status.status) }}</span></div>
+  <form action="{{ url_for('update_ai_review') }}" method="post" class="stack-form">
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="form-grid"><label>语义审核模型<input name="model" maxlength="100" value="{{ ai_review.get('model','hy3') }}"></label><label>视觉理解模型<input name="vision_model" maxlength="100" value="{{ ai_review.get('vision_model','youtu-vita') }}"></label><label>放行最低置信度<input type="number" name="minimum_allow_confidence" min="0" max="1" step="0.05" value="{{ ai_review.get('minimum_allow_confidence',0.8) }}"></label></div>
+    <div class="form-grid"><label>Hy3 超时秒数<input type="number" name="timeout_seconds" min="5" max="120" value="{{ ai_review.get('timeout_seconds',30) }}"></label><label>视觉超时秒数<input type="number" name="vision_timeout_seconds" min="5" max="120" value="{{ ai_review.get('vision_timeout_seconds',45) }}"></label><label>最大正文字符<input type="number" name="max_input_chars" min="500" max="50000" value="{{ ai_review.get('max_input_chars',12000) }}"></label><label>最多分析图片<input type="number" name="max_images" min="0" max="5" value="{{ ai_review.get('max_images',3) }}"></label></div>
+    <label class="check"><input type="checkbox" name="enabled" {{ 'checked' if ai_review.get('enabled',False) }}>启用 AI 语义审核</label>
+    <label class="check"><input type="checkbox" name="include_images" {{ 'checked' if ai_review.get('include_images',True) }}>使用 VITA 分析帖子图片</label>
+    <p class="subline">服务使用腾讯云境内 TokenHub；API 密钥只通过服务器环境变量配置，不会保存到网页、配置文件或 GitHub。模型不可直接删除普通帖子。</p>
+    <button class="primary-button" type="submit">保存 AI 审核设置</button>
+  </form>
+</section>
+
 <div class="two-column align-start">
   <section class="panel">
     <div class="panel-title"><div><h2>审核参数</h2><p>当前策略 {{ moderation.get('policy_version','') }}</p></div></div>

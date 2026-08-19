@@ -4,19 +4,24 @@
 {% block content %}
 <div class="hero-grid">
   <section class="hero-card">
-    <span class="mode-badge"><i></i>系统运行中</span>
-    <h2>先检测、再解释、后操作</h2>
-    <p>所有栏目判断、敏感信息筛查和重复检测都会保存证据。真实删除只允许管理员二次确认。</p>
+    <span class="mode-badge"><i></i>{{ 'AI 审核已就绪' if ai_status.status == 'ready' else '系统运行中' }}</span>
+    <h2>AI 先分析，管理员做终审</h2>
+    <p>规则只提供线索；大模型结合全文语义、版块定位和媒体信息给出分类、风险、证据与建议动作。</p>
   </section>
   <section class="action-card">
     <strong>立即同步频道内容</strong>
-    <p>从两个已配置频道读取最新内容并生成审核结果，不会自动删帖。</p>
+    <p>从两个频道读取最新内容并生成审核结果。只有同作者、同栏目、连续且完全相同的帖子可自动去重。</p>
     <form action="{{ url_for('scan_now') }}" method="post">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <button class="primary-button" type="submit">立即巡检</button>
     </form>
   </section>
 </div>
+
+<section class="info-banner">
+  <strong>AI 状态：{{ {'ready':'已连接','missing_key':'等待配置 API 密钥','disabled':'未启用'}.get(ai_status.status, ai_status.status) }}{% if ai_status.model %} · {{ ai_status.model }} + {{ ai_status.vision_model }}{% endif %}</strong>
+  <p>本轮 AI 完成 {{ (summary.latest_scan or {}).get('ai_reviewed', 0) }} 条，安全降级 {{ (summary.latest_scan or {}).get('ai_fallbacks', 0) }} 条。图片由 VITA 提取证据，Hy3 结合上下文给出建议；降级时不会自动删除普通内容。</p>
+</section>
 
 <div class="metric-grid">
   <article class="metric"><span>已检测内容</span><strong>{{ summary.total }}</strong><small>累计进入治理流程</small></article>

@@ -65,6 +65,22 @@ class ModerationSettings:
 
 
 @dataclass(frozen=True)
+class AIReviewSettings:
+    enabled: bool = False
+    provider: str = "tencent_tokenhub"
+    model: str = "hy3"
+    vision_model: str = "youtu-vita"
+    prompt_version: str = "2026-08-19.ai2"
+    vision_prompt_version: str = "2026-08-19.vision1"
+    timeout_seconds: int = 30
+    vision_timeout_seconds: int = 45
+    max_input_chars: int = 12000
+    minimum_allow_confidence: float = 0.80
+    include_images: bool = True
+    max_images: int = 3
+
+
+@dataclass(frozen=True)
 class GuardConfig:
     database_path: Path
     delete_mode: str = "dry_run"
@@ -79,6 +95,7 @@ class GuardConfig:
     tencent_channels: Tuple[TencentChannelSettings, ...] = field(default_factory=tuple)
     board_policies: Mapping[str, BoardPolicy] = field(default_factory=dict)
     moderation: ModerationSettings = field(default_factory=ModerationSettings)
+    ai_review: AIReviewSettings = field(default_factory=AIReviewSettings)
 
     @classmethod
     def from_file(cls, path: str) -> "GuardConfig":
@@ -142,6 +159,7 @@ class GuardConfig:
 
         board_policies = _parse_board_policies(raw.get("board_policies", {}))
         moderation = _parse_moderation(raw.get("moderation", {}))
+        ai_review = _parse_ai_review(raw.get("ai_review", {}))
 
         return cls(
             database_path=db_path,
@@ -159,6 +177,7 @@ class GuardConfig:
             tencent_channels=tencent_channels,
             board_policies=board_policies,
             moderation=moderation,
+            ai_review=ai_review,
         )
 
 
@@ -269,6 +288,39 @@ def _parse_moderation(values: object) -> ModerationSettings:
         detect_external_links=bool(values.get("detect_external_links", True)),
         detect_obfuscated_terms=bool(values.get("detect_obfuscated_terms", True)),
         terms=tuple(terms),
+    )
+
+
+def _parse_ai_review(values: object) -> AIReviewSettings:
+    if not isinstance(values, Mapping):
+        raise ValueError("ai_review 必须是对象")
+    provider = str(values.get("provider", "tencent_tokenhub")).strip().casefold()
+    if provider != "tencent_tokenhub":
+        raise ValueError("ai_review.provider 当前仅支持 tencent_tokenhub")
+    model = str(values.get("model", "hy3")).strip()
+    if not model or len(model) > 100:
+        raise ValueError("ai_review.model 无效")
+    vision_model = str(values.get("vision_model", "youtu-vita")).strip()
+    if not vision_model or len(vision_model) > 100:
+        raise ValueError("ai_review.vision_model 无效")
+    confidence = float(values.get("minimum_allow_confidence", 0.80))
+    return AIReviewSettings(
+        enabled=bool(values.get("enabled", False)),
+        provider=provider,
+        model=model,
+        vision_model=vision_model,
+        prompt_version=str(values.get("prompt_version", "2026-08-19.ai2"))[:80],
+        vision_prompt_version=str(
+            values.get("vision_prompt_version", "2026-08-19.vision1")
+        )[:80],
+        timeout_seconds=max(5, min(int(values.get("timeout_seconds", 30)), 120)),
+        vision_timeout_seconds=max(
+            5, min(int(values.get("vision_timeout_seconds", 45)), 120)
+        ),
+        max_input_chars=max(500, min(int(values.get("max_input_chars", 12000)), 50000)),
+        minimum_allow_confidence=max(0.0, min(confidence, 1.0)),
+        include_images=bool(values.get("include_images", True)),
+        max_images=max(0, min(int(values.get("max_images", 3)), 5)),
     )
 
 

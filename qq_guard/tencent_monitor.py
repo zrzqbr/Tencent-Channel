@@ -8,6 +8,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Mapping, Optional, Protocol, Sequence, Tuple
 
+from .ai_review import AIReviewClient, AIReviewUnavailable, fuse_ai_review
 from .classifier import ContentClassifier
 from .config import GuardConfig, TencentChannelSettings
 from .models import IncomingContent, ItemKind, PolicyReason, Section
@@ -62,6 +63,12 @@ class ModerationFinding:
     media_urls: Tuple[str, ...] = ()
     source_created_at: str = ""
     classification_json: str = "{}"
+    analysis_source: str = "rules"
+    ai_status: str = "not_requested"
+    ai_model: str = ""
+    ai_confidence: Optional[float] = None
+    ai_analysis_json: str = "{}"
+    ai_error: str = ""
 
 
 @dataclass(frozen=True)
@@ -75,6 +82,9 @@ class ScanReport:
     guilds: Tuple[str, ...]
     classification_counts: Mapping[str, int]
     moderation_findings: Tuple[ModerationFinding, ...]
+    ai_reviewed: int = 0
+    ai_fallbacks: int = 0
+    ai_model: str = ""
 
     def public_summary(self) -> Dict[str, Any]:
         return {
@@ -99,6 +109,9 @@ class ScanReport:
             "started_at": self.started_at,
             "finished_at": self.finished_at,
             "delete_mode": self.delete_mode,
+            "ai_reviewed": self.ai_reviewed,
+            "ai_fallbacks": self.ai_fallbacks,
+            "ai_model": self.ai_model,
             "guilds": list(self.guilds),
             "classification_counts": dict(self.classification_counts),
             "review_required": sum(
@@ -118,6 +131,10 @@ class ScanReport:
                     "risk_level": finding.risk_level,
                     "risk_score": finding.risk_score,
                     "policy_version": finding.policy_version,
+                    "analysis_source": finding.analysis_source,
+                    "ai_status": finding.ai_status,
+                    "ai_model": finding.ai_model,
+                    "ai_confidence": finding.ai_confidence,
                     "reasons": [
                         {
                             "code": reason.code,
@@ -137,7 +154,12 @@ class ScanReport:
 
 
 class TencentChannelMonitor:
-    def __init__(self, config: GuardConfig, api: TencentFeedApi) -> None:
+    def __init__(
+        self,
+        config: GuardConfig,
+        api: TencentFeedApi,
+        ai_client: Optional[AIReviewClient] = None,
+    ) -> None:
         settings = config.tencent_channels or (
             (config.tencent_channel,) if config.tencent_channel is not None else ()
         )
@@ -150,6 +172,9 @@ class TencentChannelMonitor:
         self.moderation_engine = ModerationEngine(config)
         self.database_path = Path(config.database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
+        self.ai_client = ai_client or AIReviewClient(config.ai_review, self.database_path)
+        self._ai_reviewed = 0
+        self._ai_fallbacks = 0
         self._initialize_audit()
 
     def scan_once(self) -> ScanReport:
@@ -160,6 +185,8 @@ class TencentChannelMonitor:
         moderation_findings: List[ModerationFinding] = []
         classification_counts: Dict[str, int] = {}
         guild_names: List[str] = []
+        self._ai_reviewed = 0
+        self._ai_fallbacks = 0
 
         for settings in self.settings:
             guild_label = settings.name or settings.guild_id
@@ -168,42 +195,63 @@ class TencentChannelMonitor:
             for section, channel_id in settings.channels.items():
                 feeds = self._list_feeds(settings, channel_id)
                 total += len(feeds)
-                classification_counts[f"{guild_label}:{section.value}"] = len(feeds)
                 details: Dict[str, Dict[str, Any]] = {}
+                by_section: Dict[Section, List[Dict[str, Any]]] = {}
+                nearby_items: List[IncomingContent] = []
                 for feed in feeds:
                     detail = self._detail(settings, channel_id, feed, details)
-                    if section is Section.WEEKLY_QUESTION:
-                        if not list(detail.get("topic_names") or []):
-                            weekly_missing += 1
                     classification = self._classify_feed(settings, channel_id, feed, detail)
-                    moderation_findings.extend(
-                        self._moderation_finding(
-                            settings, channel_id, feed, detail, classification
+                    classification, feed_findings = self._analyze_finding(
+                        settings,
+                        channel_id,
+                        feed,
+                        detail,
+                        classification,
+                        nearby_items[-3:],
+                    )
+                    nearby_items.append(
+                        self._incoming_content(settings, channel_id, feed, detail)
+                    )
+                    moderation_findings.extend(feed_findings)
+                    by_section.setdefault(classification.section, []).append(feed)
+                    key = f"{guild_label}:{classification.section.value}"
+                    classification_counts[key] = classification_counts.get(key, 0) + 1
+                    if "missing_weekly_hashtag" in classification.validation_issues:
+                        weekly_missing += 1
+                for detected_section, section_feeds in by_section.items():
+                    findings.extend(
+                        self._find_duplicates(
+                            settings, channel_id, detected_section, section_feeds, details
                         )
                     )
-                findings.extend(
-                    self._find_duplicates(settings, channel_id, section, feeds, details)
-                )
 
             for _channel_name, channel_id in settings.auto_classify_channels.items():
                 feeds = self._list_feeds(settings, channel_id)
                 total += len(feeds)
                 details: Dict[str, Dict[str, Any]] = {}
                 by_section: Dict[Section, List[Dict[str, Any]]] = {}
+                nearby_items = []
                 for feed in feeds:
                     detail = self._detail(settings, channel_id, feed, details)
                     result = self._classify_feed(settings, channel_id, feed, detail)
+                    result, feed_findings = self._analyze_finding(
+                        settings,
+                        channel_id,
+                        feed,
+                        detail,
+                        result,
+                        nearby_items[-3:],
+                    )
+                    nearby_items.append(
+                        self._incoming_content(settings, channel_id, feed, detail)
+                    )
                     section = result.section
                     by_section.setdefault(section, []).append(feed)
                     key = f"{guild_label}:{section.value}"
                     classification_counts[key] = classification_counts.get(key, 0) + 1
                     if "missing_weekly_hashtag" in result.validation_issues:
                         weekly_missing += 1
-                    moderation_findings.extend(
-                        self._moderation_finding(
-                            settings, channel_id, feed, detail, result
-                        )
-                    )
+                    moderation_findings.extend(feed_findings)
                 for section, section_feeds in by_section.items():
                     findings.extend(
                         self._find_duplicates(
@@ -225,6 +273,9 @@ class TencentChannelMonitor:
             guilds=tuple(guild_names),
             classification_counts=classification_counts,
             moderation_findings=tuple(moderation_findings),
+            ai_reviewed=self._ai_reviewed,
+            ai_fallbacks=self._ai_fallbacks,
+            ai_model=self.config.ai_review.model if self.config.ai_review.enabled else "",
         )
         self._record_scan(report)
         return report
@@ -377,18 +428,76 @@ class TencentChannelMonitor:
             created_at=str(feed.get("create_time_raw") or ""),
         )
 
-    def _moderation_finding(
+    def _analyze_finding(
         self,
         settings: TencentChannelSettings,
         channel_id: str,
         feed: Mapping[str, Any],
         detail: Mapping[str, Any],
         classification,
-    ) -> List[ModerationFinding]:
+        context_items: Sequence[IncomingContent] = (),
+    ) -> Tuple[Any, List[ModerationFinding]]:
         item = self._incoming_content(settings, channel_id, feed, detail)
-        assessment = self.moderation_engine.evaluate(item, classification)
+        rule_assessment = self.moderation_engine.evaluate(item, classification)
+        assessment = rule_assessment
+        analysis_source = "rules"
+        ai_status = "disabled" if not self.config.ai_review.enabled else "fallback"
+        ai_model = self.config.ai_review.model if self.config.ai_review.enabled else ""
+        ai_confidence: Optional[float] = None
+        ai_error = ""
+        ai_analysis: Dict[str, Any] = {
+            "rule_signals": [
+                {
+                    "code": reason.code,
+                    "message": reason.message,
+                    "severity": reason.severity,
+                    "evidence": reason.evidence,
+                }
+                for reason in rule_assessment.reasons
+            ]
+        }
+        if self.config.ai_review.enabled:
+            try:
+                ai = self.ai_client.review(
+                    item,
+                    self.config.board_policies.get(channel_id),
+                    classification,
+                    rule_assessment,
+                    context_items,
+                )
+                classification, assessment = fuse_ai_review(
+                    classification, rule_assessment, ai, self.config.ai_review
+                )
+                self._ai_reviewed += 1
+                analysis_source = "ai"
+                ai_status = ai.status
+                ai_model = ai.model
+                ai_confidence = ai.classification_confidence
+                ai_error = ai.error
+                if ai.vision_status == "failed":
+                    self._ai_fallbacks += 1
+                ai_analysis.update(
+                    {
+                        "provider": ai.provider,
+                        "model": ai.model,
+                        "vision_model": ai.vision_model,
+                        "vision_status": ai.vision_status,
+                        "vision_analysis": ai.vision_analysis,
+                        "prompt_version": ai.prompt_version,
+                        "summary": ai.summary,
+                        "section": ai.section.value,
+                        "classification_confidence": ai.classification_confidence,
+                        "risk_level": ai.risk_level.value,
+                        "risk_score": ai.risk_score,
+                        "recommended_action": ai.recommended_action.value,
+                    }
+                )
+            except AIReviewUnavailable as exc:
+                self._ai_fallbacks += 1
+                ai_error = str(exc)[:500]
+                ai_analysis["error"] = ai_error
         if assessment.action.value == "allow" and not assessment.reasons:
-            return []
+            return classification, []
         finding = ModerationFinding(
             guild_id=settings.guild_id,
             guild_name=settings.name,
@@ -416,9 +525,15 @@ class TencentChannelMonitor:
                 },
                 ensure_ascii=False,
             ),
+            analysis_source=analysis_source,
+            ai_status=ai_status,
+            ai_model=ai_model,
+            ai_confidence=ai_confidence,
+            ai_analysis_json=json.dumps(ai_analysis, ensure_ascii=False),
+            ai_error=ai_error,
         )
         self._record_moderation(finding)
-        return [finding]
+        return classification, [finding]
 
     def _find_duplicates(
         self,
@@ -507,7 +622,10 @@ class TencentChannelMonitor:
                     weekly_missing_topic INTEGER NOT NULL,
                     delete_mode TEXT NOT NULL,
                     guilds_json TEXT NOT NULL DEFAULT '[]',
-                    classification_json TEXT NOT NULL DEFAULT '{}'
+                    classification_json TEXT NOT NULL DEFAULT '{}',
+                    ai_reviewed INTEGER NOT NULL DEFAULT 0,
+                    ai_fallbacks INTEGER NOT NULL DEFAULT 0,
+                    ai_model TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS tencent_duplicate_actions (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -546,6 +664,12 @@ class TencentChannelMonitor:
                     reviewed_by TEXT NOT NULL DEFAULT '',
                     reviewed_at TEXT,
                     review_notes TEXT NOT NULL DEFAULT '',
+                    analysis_source TEXT NOT NULL DEFAULT 'rules',
+                    ai_status TEXT NOT NULL DEFAULT 'not_requested',
+                    ai_model TEXT NOT NULL DEFAULT '',
+                    ai_confidence REAL,
+                    ai_analysis_json TEXT NOT NULL DEFAULT '{}',
+                    ai_error TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     UNIQUE(guild_id, feed_id, policy_version)
                 );
@@ -567,6 +691,9 @@ class TencentChannelMonitor:
                 "classification_json",
                 "TEXT NOT NULL DEFAULT '{}'",
             )
+            self._ensure_column(connection, "tencent_scan_runs", "ai_reviewed", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "ai_fallbacks", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "ai_model", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(
                 connection,
                 "tencent_duplicate_actions",
@@ -584,6 +711,12 @@ class TencentChannelMonitor:
             self._ensure_column(connection, "tencent_moderation_findings", "reviewed_by", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(connection, "tencent_moderation_findings", "reviewed_at", "TEXT")
             self._ensure_column(connection, "tencent_moderation_findings", "review_notes", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "analysis_source", "TEXT NOT NULL DEFAULT 'rules'")
+            self._ensure_column(connection, "tencent_moderation_findings", "ai_status", "TEXT NOT NULL DEFAULT 'not_requested'")
+            self._ensure_column(connection, "tencent_moderation_findings", "ai_model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_moderation_findings", "ai_confidence", "REAL")
+            self._ensure_column(connection, "tencent_moderation_findings", "ai_analysis_json", "TEXT NOT NULL DEFAULT '{}'")
+            self._ensure_column(connection, "tencent_moderation_findings", "ai_error", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(
                 connection,
                 "tencent_duplicate_actions",
@@ -685,8 +818,9 @@ class TencentChannelMonitor:
                 (guild_id, guild_name, channel_id, feed_id, title, section, action,
                  risk_level, risk_score, policy_version, reasons_json, review_status,
                  author_id, body, media_urls_json, source_created_at, classification_json,
-                 created_at)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?)
+                 analysis_source, ai_status, ai_model, ai_confidence, ai_analysis_json,
+                 ai_error, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(guild_id, feed_id, policy_version) DO UPDATE SET
                     guild_name = excluded.guild_name,
                     channel_id = excluded.channel_id,
@@ -701,6 +835,12 @@ class TencentChannelMonitor:
                     media_urls_json = excluded.media_urls_json,
                     source_created_at = excluded.source_created_at,
                     classification_json = excluded.classification_json,
+                    analysis_source = excluded.analysis_source,
+                    ai_status = excluded.ai_status,
+                    ai_model = excluded.ai_model,
+                    ai_confidence = excluded.ai_confidence,
+                    ai_analysis_json = excluded.ai_analysis_json,
+                    ai_error = excluded.ai_error,
                     created_at = excluded.created_at
                 """,
                 (
@@ -720,6 +860,12 @@ class TencentChannelMonitor:
                     json.dumps(finding.media_urls, ensure_ascii=False),
                     finding.source_created_at,
                     finding.classification_json,
+                    finding.analysis_source,
+                    finding.ai_status,
+                    finding.ai_model,
+                    finding.ai_confidence,
+                    finding.ai_analysis_json,
+                    finding.ai_error,
                     now,
                 ),
             )
@@ -730,8 +876,9 @@ class TencentChannelMonitor:
                 """
                 INSERT INTO tencent_scan_runs
                 (started_at, finished_at, scanned_feeds, duplicates, weekly_missing_topic,
-                 delete_mode, guilds_json, classification_json)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                 delete_mode, guilds_json, classification_json, ai_reviewed, ai_fallbacks,
+                 ai_model)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report.started_at,
@@ -742,6 +889,9 @@ class TencentChannelMonitor:
                     report.delete_mode,
                     json.dumps(report.guilds, ensure_ascii=False),
                     json.dumps(report.classification_counts, ensure_ascii=False, sort_keys=True),
+                    report.ai_reviewed,
+                    report.ai_fallbacks,
+                    report.ai_model,
                 ),
             )
 

@@ -209,6 +209,32 @@ class WebTests(unittest.TestCase):
         self.assertTrue(any(item["term"] == "blockedword" for item in raw["moderation"]["terms"]))
         self.assertNotEqual(raw["moderation"]["policy_version"], "2026-08-19.1")
 
+    def test_ai_settings_use_tokenhub_hy3_and_vita(self):
+        self.login()
+        response = self.client.get("/rules")
+        response = self.client.post(
+            "/rules/ai-review",
+            data={
+                "csrf_token": self.csrf(response),
+                "enabled": "on",
+                "include_images": "on",
+                "model": "hy3",
+                "vision_model": "youtu-vita",
+                "minimum_allow_confidence": "0.85",
+                "timeout_seconds": "30",
+                "vision_timeout_seconds": "45",
+                "max_input_chars": "12000",
+                "max_images": "3",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(raw["ai_review"]["provider"], "tencent_tokenhub")
+        self.assertEqual(raw["ai_review"]["model"], "hy3")
+        self.assertEqual(raw["ai_review"]["vision_model"], "youtu-vita")
+        self.assertTrue(raw["ai_review"]["include_images"])
+
     def test_review_resolution_is_audited(self):
         row_id = self.insert_tencent_review()
         response = self.login()

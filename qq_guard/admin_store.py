@@ -48,8 +48,11 @@ class AdminStore:
                 SELECT COUNT(*) AS total,
                        SUM(review_status = 'pending') AS pending,
                        SUM(delete_status = 'deleted') AS deleted,
-                       SUM(delete_status = 'failed') AS failed
+                       SUM(delete_status = 'failed') AS failed,
+                       SUM(analysis_source = 'ai') AS ai_analyzed,
+                       SUM(ai_status = 'fallback') AS ai_fallbacks
                 FROM tencent_moderation_findings
+                WHERE review_status <> 'superseded'
                 """
             ).fetchone()
             duplicate = connection.execute(
@@ -64,6 +67,7 @@ class AdminStore:
                         SELECT section FROM content_events
                         UNION ALL
                         SELECT section FROM tencent_moderation_findings
+                        WHERE review_status <> 'superseded'
                     )
                     GROUP BY section
                     ORDER BY count DESC
@@ -79,6 +83,7 @@ class AdminStore:
                         SELECT risk_level FROM content_events
                         UNION ALL
                         SELECT risk_level FROM tencent_moderation_findings
+                        WHERE review_status <> 'superseded'
                     )
                     GROUP BY risk_level
                     """
@@ -100,6 +105,8 @@ class AdminStore:
             "by_section": by_section,
             "by_risk": by_risk,
             "latest_scan": self._scan_row(latest_scan) if latest_scan else None,
+            "ai_analyzed": int(tencent["ai_analyzed"] or 0),
+            "ai_fallbacks": int(tencent["ai_fallbacks"] or 0),
         }
 
     def reviews(
@@ -118,7 +125,10 @@ class AdminStore:
                        risk_score, recommended_action AS action, policy_version,
                        decision_reasons_json AS reasons_json, review_status,
                        delete_status, delete_error, received_at AS created_at,
-                       source_created_at, classification_json, media_urls_json
+                       source_created_at, classification_json, media_urls_json,
+                       'rules' AS analysis_source, 'not_requested' AS ai_status,
+                       '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
+                       '' AS ai_error
                 FROM content_events
                 WHERE (? = '' OR review_status = ?)
                   AND (? = '' OR risk_level = ?)
@@ -134,7 +144,8 @@ class AdminStore:
                        section, title, body, author_id, risk_level, risk_score,
                        action, policy_version, reasons_json, review_status,
                        delete_status, delete_error, created_at, source_created_at,
-                       classification_json, media_urls_json
+                       classification_json, media_urls_json, analysis_source,
+                       ai_status, ai_model, ai_confidence, ai_analysis_json, ai_error
                 FROM tencent_moderation_findings
                 WHERE (? = '' OR review_status = ?)
                   AND (? = '' OR risk_level = ?)
@@ -164,7 +175,10 @@ class AdminStore:
                            risk_score, recommended_action AS action, policy_version,
                            decision_reasons_json AS reasons_json, review_status,
                            delete_status, delete_error, received_at AS created_at,
-                           source_created_at, classification_json, media_urls_json
+                           source_created_at, classification_json, media_urls_json,
+                           'rules' AS analysis_source, 'not_requested' AS ai_status,
+                           '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
+                           '' AS ai_error
                     FROM content_events WHERE id = ?
                     """,
                     (int(row_id),),
@@ -176,7 +190,8 @@ class AdminStore:
                            section, title, body, author_id, risk_level, risk_score,
                            action, policy_version, reasons_json, review_status,
                            delete_status, delete_error, created_at, source_created_at,
-                           classification_json, media_urls_json
+                           classification_json, media_urls_json, analysis_source,
+                           ai_status, ai_model, ai_confidence, ai_analysis_json, ai_error
                     FROM tencent_moderation_findings WHERE id = ?
                     """,
                     (int(row_id),),
@@ -411,7 +426,10 @@ class AdminStore:
                     weekly_missing_topic INTEGER NOT NULL,
                     delete_mode TEXT NOT NULL,
                     guilds_json TEXT NOT NULL DEFAULT '[]',
-                    classification_json TEXT NOT NULL DEFAULT '{}'
+                    classification_json TEXT NOT NULL DEFAULT '{}',
+                    ai_reviewed INTEGER NOT NULL DEFAULT 0,
+                    ai_fallbacks INTEGER NOT NULL DEFAULT 0,
+                    ai_model TEXT NOT NULL DEFAULT ''
                 );
 
                 CREATE TABLE IF NOT EXISTS tencent_duplicate_actions (
@@ -452,6 +470,12 @@ class AdminStore:
                     reviewed_by TEXT NOT NULL DEFAULT '',
                     reviewed_at TEXT,
                     review_notes TEXT NOT NULL DEFAULT '',
+                    analysis_source TEXT NOT NULL DEFAULT 'rules',
+                    ai_status TEXT NOT NULL DEFAULT 'not_requested',
+                    ai_model TEXT NOT NULL DEFAULT '',
+                    ai_confidence REAL,
+                    ai_analysis_json TEXT NOT NULL DEFAULT '{}',
+                    ai_error TEXT NOT NULL DEFAULT '',
                     created_at TEXT NOT NULL,
                     UNIQUE(guild_id, feed_id, policy_version)
                 );
@@ -498,8 +522,20 @@ class AdminStore:
                 "reviewed_by": "TEXT NOT NULL DEFAULT ''",
                 "reviewed_at": "TEXT",
                 "review_notes": "TEXT NOT NULL DEFAULT ''",
+                "analysis_source": "TEXT NOT NULL DEFAULT 'rules'",
+                "ai_status": "TEXT NOT NULL DEFAULT 'not_requested'",
+                "ai_model": "TEXT NOT NULL DEFAULT ''",
+                "ai_confidence": "REAL",
+                "ai_analysis_json": "TEXT NOT NULL DEFAULT '{}'",
+                "ai_error": "TEXT NOT NULL DEFAULT ''",
             }.items():
                 self._ensure_column(connection, "tencent_moderation_findings", column, declaration)
+            for column, declaration in {
+                "ai_reviewed": "INTEGER NOT NULL DEFAULT 0",
+                "ai_fallbacks": "INTEGER NOT NULL DEFAULT 0",
+                "ai_model": "TEXT NOT NULL DEFAULT ''",
+            }.items():
+                self._ensure_column(connection, "tencent_scan_runs", column, declaration)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.database_path), timeout=15)
@@ -526,6 +562,7 @@ class AdminStore:
         item["reasons"] = _json(item.pop("reasons_json", "[]"), [])
         item["classification"] = _json(item.pop("classification_json", "{}"), {})
         item["media_urls"] = _json(item.pop("media_urls_json", "[]"), [])
+        item["ai_analysis"] = _json(item.pop("ai_analysis_json", "{}"), {})
         return item
 
     @staticmethod

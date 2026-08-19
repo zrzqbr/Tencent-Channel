@@ -21,6 +21,7 @@ from flask import (
 from werkzeug.middleware.proxy_fix import ProxyFix
 from werkzeug.security import check_password_hash
 
+from .ai_review import AIReviewClient, AIReviewUnavailable, fuse_ai_review
 from .admin_store import AdminStore
 from .classifier import ContentClassifier
 from .config import GuardConfig
@@ -45,6 +46,7 @@ STATUS_LABELS = {
     "ignored": "已忽略",
     "deleted": "已删除",
     "not_required": "无需审核",
+    "superseded": "已被新策略替代",
 }
 
 
@@ -204,12 +206,14 @@ def create_app(
         reviews = store.reviews(status="pending", limit=8)
         scans = store.scans(limit=5)
         current = GuardConfig.from_file(str(resolved_config))
+        ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
         return render_template(
             "dashboard.html",
             summary=summary,
             reviews=reviews,
             scans=scans,
             config=current,
+            ai_status=ai_status,
         )
 
     @app.get("/reviews")
@@ -336,13 +340,38 @@ def create_app(
     @login_required
     def rules():
         raw = editor.snapshot()
+        current = GuardConfig.from_file(str(resolved_config))
         return render_template(
             "rules.html",
             raw=raw,
             moderation=raw.get("moderation", {}),
             terms=raw.get("moderation", {}).get("terms", []),
             rules=raw.get("rules", {}),
+            ai_review=raw.get("ai_review", {}),
+            ai_status=AIReviewClient(current.ai_review, current.database_path).public_status(),
         )
+
+    @app.post("/rules/ai-review")
+    @login_required
+    def update_ai_review():
+        values = dict(request.form)
+        values.pop("csrf_token", None)
+        values["enabled"] = "enabled" in request.form
+        values["include_images"] = "include_images" in request.form
+        try:
+            version = editor.update_ai_review(values)
+            store.record_audit(
+                "admin",
+                "policy.update",
+                "ai_review",
+                version,
+                {key: value for key, value in values.items() if "key" not in key.casefold()},
+                remote_ip(),
+            )
+            flash(f"AI 审核设置已更新，策略版本为 {version}。", "success")
+        except (ValueError, OSError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("rules"))
 
     @app.post("/rules/moderation")
     @login_required
@@ -467,8 +496,32 @@ def create_app(
                 )[:20],
             )
             classification = ContentClassifier(current).classify(item)
-            moderation = ModerationEngine(current).evaluate(item, classification)
-            result = {"classification": classification, "moderation": moderation}
+            rule_moderation = ModerationEngine(current).evaluate(item, classification)
+            moderation = rule_moderation
+            ai_result = None
+            ai_error = ""
+            if current.ai_review.enabled:
+                try:
+                    ai_result = AIReviewClient(
+                        current.ai_review, current.database_path
+                    ).review(
+                        item,
+                        current.board_policies.get(item.channel_id),
+                        classification,
+                        rule_moderation,
+                    )
+                    classification, moderation = fuse_ai_review(
+                        classification, rule_moderation, ai_result, current.ai_review
+                    )
+                except AIReviewUnavailable as exc:
+                    ai_error = str(exc)
+            result = {
+                "classification": classification,
+                "moderation": moderation,
+                "rule_moderation": rule_moderation,
+                "ai_review": ai_result,
+                "ai_error": ai_error,
+            }
             store.record_audit(
                 "admin",
                 "content.test",

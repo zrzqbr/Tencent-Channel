@@ -9,6 +9,8 @@
 
 系统还包含可解释的内容审核层：中英文敏感词、联系方式、外链、低信息灌水、乱码、版块错投和人工复核队列。完整动作边界见 [审核与治理规则](docs/MODERATION_POLICY.md)，未来网页化可按 [管理后台设计基线](docs/ADMIN_BACKEND.md) 接入。
 
+AI 审核使用腾讯云境内 TokenHub 的双模型链路：`youtu-vita` 先提取图片文字、主体和风险线索，`hy3` 再结合全文、相邻内容、版块要求和规则信号给出结构化分类、风险、证据和建议。普通内容只能进入人工审批，AI 无权直接删帖。
+
 频道管理后台的正式域名是 [tencent.ruitcarch.cloud](https://tencent.ruitcarch.cloud)。DNS、独立 Nginx 站点、自动续期 HTTPS 和密码登录后台均已启用。部署状态与上线检查项见 [部署与域名](docs/DEPLOYMENT.md)。
 
 “全部”和“热门”是展示视图，不作为内容分类。
@@ -121,6 +123,19 @@ qq-guard --config config.json tencent-monitor
 ```
 
 官方 CLI 模式不需要把 Token 写入本项目；登录凭据由 `tencent-channel-cli login` 单独保存在本机。测试模式只输出 `detected_only`，不会调用删帖接口。只有同时设置 `delete_mode=live` 和 `auto_delete_duplicates=true`，才会对命中的后一条重复帖子调用官方删帖接口。
+
+## 接入腾讯云 Hy3 与 VITA
+
+在腾讯云 TokenHub 控制台开通 `hy3` 和 `youtu-vita`，创建广州站 API Key，并仅在服务器环境文件中配置：
+
+```bash
+TENCENT_TOKENHUB_API_KEY='腾讯云 TokenHub API Key'
+TENCENT_TOKENHUB_BASE_URL='https://tokenhub.tencentmaas.com/v1'
+```
+
+同一 TokenHub Key 默认同时供 Hy3 和 Youtu-VITA 使用。如视觉服务使用单独密钥，可以额外设置 `TENCENT_VITA_API_KEY`。不要把任何密钥写进 `config.json`、网页表单或 GitHub。
+
+当 VITA 调用失败时，含图片内容会被强制转为人工复核；当 Hy3 调用失败时，系统降级为规则审核。两种降级都不会触发普通内容自动删除。
 
 程序输出一行一条 JSON 日志。每次检测都会包含栏目、置信度、井号话题、是否为精华候选、是否重复及删除结果。
 

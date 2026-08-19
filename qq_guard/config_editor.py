@@ -88,6 +88,50 @@ class ConfigEditor:
 
         return self._mutate(mutate, bump_policy=True)
 
+    def update_ai_review(self, values: Dict[str, Any]) -> str:
+        model = str(values.get("model", "hy3")).strip()
+        if not model or len(model) > 100:
+            raise ValueError("模型名称无效")
+        vision_model = str(values.get("vision_model", "youtu-vita")).strip()
+        if not vision_model or len(vision_model) > 100:
+            raise ValueError("视觉模型名称无效")
+        confidence = max(
+            0.0, min(float(values.get("minimum_allow_confidence", 0.80)), 1.0)
+        )
+
+        def mutate(raw: Dict[str, Any]) -> None:
+            ai_review = raw.setdefault("ai_review", {})
+            ai_review.update(
+                {
+                    "enabled": bool(values.get("enabled")),
+                    "provider": "tencent_tokenhub",
+                    "model": model,
+                    "vision_model": vision_model,
+                    "prompt_version": str(
+                        ai_review.get("prompt_version", "2026-08-19.ai2")
+                    ),
+                    "vision_prompt_version": str(
+                        ai_review.get(
+                            "vision_prompt_version", "2026-08-19.vision1"
+                        )
+                    ),
+                    "timeout_seconds": max(
+                        5, min(int(values.get("timeout_seconds", 30)), 120)
+                    ),
+                    "vision_timeout_seconds": max(
+                        5, min(int(values.get("vision_timeout_seconds", 45)), 120)
+                    ),
+                    "max_input_chars": max(
+                        500, min(int(values.get("max_input_chars", 12000)), 50000)
+                    ),
+                    "minimum_allow_confidence": confidence,
+                    "include_images": bool(values.get("include_images")),
+                    "max_images": max(0, min(int(values.get("max_images", 3)), 5)),
+                }
+            )
+
+        return self._mutate(mutate, bump_policy=True)
+
     def update_keywords(self, values: Dict[str, Any]) -> str:
         def parse(name: str) -> List[str]:
             result: List[str] = []
