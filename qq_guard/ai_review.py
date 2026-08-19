@@ -235,26 +235,34 @@ class AIReviewClient:
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",
         }
-        response = self._post_with_retry(
-            f"{self.base_url}/responses",
-            headers,
-            json.dumps(request_payload, ensure_ascii=False).encode("utf-8"),
-            self.settings.timeout_seconds,
-            "Hy3 语义审核",
-        )
-        try:
-            parsed = self._extract_output(response)
-            decision = self._decision(
-                parsed,
-                status="completed" if not vision_error else "completed_text_only",
-                vision_analysis=vision_analysis,
-                vision_status=vision_status,
-                vision_error=vision_error,
+        body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
+        parse_error: Optional[Exception] = None
+        for parse_attempt in range(3):
+            response = self._post_with_retry(
+                f"{self.base_url}/responses",
+                headers,
+                body,
+                self.settings.timeout_seconds,
+                "Hy3 语义审核",
             )
-        except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+            try:
+                parsed = self._extract_output(response)
+                decision = self._decision(
+                    parsed,
+                    status="completed" if not vision_error else "completed_text_only",
+                    vision_analysis=vision_analysis,
+                    vision_status=vision_status,
+                    vision_error=vision_error,
+                )
+                break
+            except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
+                parse_error = exc
+                if parse_attempt < 2:
+                    time.sleep(0.5 * (2**parse_attempt))
+        else:
             raise AIReviewUnavailable(
-                f"Hy3 语义审核响应无效：{type(exc).__name__}: {exc}"
-            ) from exc
+                f"Hy3 语义审核连续返回无效结构：{type(parse_error).__name__}: {parse_error}"
+            ) from parse_error
         self._store_cache(cache_key, parsed)
         return decision
 
@@ -342,7 +350,7 @@ class AIReviewClient:
                     "schema": _REVIEW_SCHEMA,
                 }
             },
-            "max_output_tokens": 2000,
+            "max_output_tokens": 4000,
         }
         cache_evidence = dict(evidence)
         cache_evidence["vision"] = dict(evidence["vision"])
