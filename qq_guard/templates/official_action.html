@@ -8,6 +8,7 @@
   <strong>{{ '可能删帖或影响成员' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只读取腾讯官方数据' }}</strong>
   <p>{% if capability.is_write %}建议先点“安全预演”。预演只检查参数和影响，不会真的改频道；真实执行会要求密码、原因和确认，并进入操作记录。{% else %}这个工具只读取数据，返回结果会隐藏 Token、Cookie、分页游标等敏感字段。{% endif %}</p>
 </section>
+<section class="info-banner"><strong>候选数据已同步</strong><p>当前后台已同步 {{ official_sources.guilds }} 个频道、{{ official_sources.channels }} 个栏目、{{ official_sources.feeds }} 条帖子候选和 {{ official_sources.authors }} 个作者候选。评论、回复这类项如果暂时没有缓存，仍可手填。</p></section>
 {% if capability.note %}<section class="info-banner warning-banner"><strong>官方使用约束</strong><p>{{ capability.note }}</p></section>{% endif %}
 {% if error %}<div class="flash error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ error }}</div>{% endif %}
 <section class="panel">
@@ -15,15 +16,13 @@
   <form method="post" class="stack-form official-form" data-official-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="official-fields">
-    {% for flag in schema.flags %}
-      {% if flag.name not in ['yes','json','dry-run','verbose','log-level'] %}
-      <label>{{ flag.description or flag.name }}{% if flag.required %}<b>必填</b>{% endif %}
-        {% if flag.enum %}<select name="param__{{ flag.name }}" {{ 'required' if flag.required }}><option value="">请选择</option>{% for option in flag.enum %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select>
-        {% elif flag.type in ['json','object','array','stringArray','strings'] %}<textarea name="param__{{ flag.name }}" rows="3" placeholder='请输入 JSON，例如 ["值1","值2"]' {{ 'required' if flag.required }}></textarea>
-        {% else %}<input name="param__{{ flag.name }}" type="{{ 'number' if flag.type in ['int','integer'] else 'text' }}" value="{{ flag.get('default', '') }}" {{ 'required' if flag.required }} autocomplete="off">{% endif %}
-        {% if flag.enum %}<small>可选值：{{ flag.enum|join('、') }}</small>{% endif %}
+    {% for field in form_fields %}
+      <label>{{ field.description }}{% if field.required %}<b>必填</b>{% endif %}
+        {% if field.input_kind == 'select' %}<select name="param__{{ field.name }}" {{ 'required' if field.required }}><option value="">请选择</option>{% for option in field.options %}<option value="{{ option.value }}" {{ 'selected' if field.value == option.value }}>{{ option.label }}</option>{% endfor %}</select>
+        {% elif field.input_kind == 'textarea' %}<textarea name="param__{{ field.name }}" rows="3" placeholder="{{ field.placeholder }}" {{ 'required' if field.required }}>{{ field.value }}</textarea>
+        {% else %}<input name="param__{{ field.name }}" type="{{ 'number' if field.type in ['int','integer'] else 'text' }}" value="{{ field.value }}" placeholder="{{ field.placeholder }}" {{ 'required' if field.required }} autocomplete="off">{% endif %}
+        {% if field.source_hint %}<small>{{ field.source_hint }}</small>{% endif %}
       </label>
-      {% endif %}
     {% endfor %}
     </div>
     <details class="advanced-parameters"><summary>更多参数</summary><p>只在官方工具需要复杂对象或数组时填写，会与上面的字段合并。</p><textarea name="advanced_json" rows="5" placeholder='{"字段名":"值"}'></textarea></details>

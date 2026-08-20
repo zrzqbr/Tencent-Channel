@@ -41,14 +41,27 @@ class FakeTencentClient:
                         "group": "write",
                         "risk": "high-risk-write",
                     },
+                    {
+                        "use": "move-feed",
+                        "short": "移动帖子",
+                        "group": "write",
+                        "risk": "write",
+                    },
                 ],
             }
         ]
 
     def capability_schema(self, domain, action):
-        flags = [
-            {"name": "feed-id", "type": "string", "required": True, "description": "帖子 ID"}
-        ]
+        if action == "move-feed":
+            flags = [
+                {"name": "guild-id", "type": "string", "required": True, "description": "频道 ID"},
+                {"name": "channel-id", "type": "string", "required": True, "description": "目标栏目 ID"},
+                {"name": "feed-id", "type": "string", "required": True, "description": "帖子 ID"},
+            ]
+        else:
+            flags = [
+                {"name": "feed-id", "type": "string", "required": True, "description": "帖子 ID"}
+            ]
         return {
             "command": f"{domain}.{action}",
             "description": "测试官方能力",
@@ -244,6 +257,29 @@ class WebTests(unittest.TestCase):
         self.assertIn("查清楚".encode("utf-8"), response.data)
         self.assertIn("处理风险".encode("utf-8"), response.data)
         self.assertIn("当前关闭，只能预演".encode("utf-8"), response.data)
+
+    def test_official_action_uses_synced_dropdown_candidates(self):
+        self.insert_tencent_review(feed_id="feed-sync", title="同步候选帖子")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy", "guild_id": "1",
+            "channels": {"qa_discussion": "2", "practical_article": "3"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "2": {"name": "WorkBuddy·问答与交流", "expected_sections": ["qa_discussion"]},
+            "3": {"name": "WorkBuddy·实用文章", "expected_sections": ["practical_article"]},
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        self.login()
+        response = self.client.get("/official/feed/move-feed")
+        self.assertEqual(response.status_code, 200)
+        self.assertIn('name="param__guild-id"'.encode("utf-8"), response.data)
+        self.assertIn('name="param__channel-id"'.encode("utf-8"), response.data)
+        self.assertIn('name="param__feed-id"'.encode("utf-8"), response.data)
+        self.assertIn("同步候选帖子".encode("utf-8"), response.data)
+        self.assertIn("WorkBuddy · 1".encode("utf-8"), response.data)
+        self.assertIn("WorkBuddy · 实用文章 · 3".encode("utf-8"), response.data)
 
     def test_utc_scan_time_is_displayed_as_beijing_time(self):
         self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")

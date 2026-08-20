@@ -828,10 +828,13 @@ def create_app(
             cli_status["login"] = str(login_data.get("message") or "已连接")
         except (TencentCliError, OSError, AttributeError, ValueError) as exc:
             cli_status["error"] = str(exc)[:500]
+        current = GuardConfig.from_file(str(resolved_config))
+        recent_reviews = store.reviews(status="", limit=250)
         return render_template(
             "official.html",
             groups=grouped_capabilities(capabilities),
             workflows=_official_workflows(capabilities),
+            official_sources=_official_sources(current, recent_reviews),
             capability_count=len(capabilities),
             cli_status=cli_status,
             skill_version=OFFICIAL_SKILL_VERSION,
@@ -857,6 +860,10 @@ def create_app(
             if capability is None:
                 abort(404)
             schema = client.capability_schema(domain, action)
+            current = GuardConfig.from_file(str(resolved_config))
+            recent_reviews = store.reviews(status="", limit=250)
+            submitted_values = request.form if request.method == "POST" else {}
+            form_fields = _official_form_fields(schema, current, recent_reviews, submitted_values)
             if request.method == "POST":
                 try:
                     parameters = normalize_command_parameters(
@@ -918,9 +925,11 @@ def create_app(
                 "official_action.html",
                 capability=capability,
                 schema=schema,
+                form_fields=form_fields,
                 result=result,
                 error=error,
                 writes_enabled=official_writes_enabled(),
+                official_sources=_official_sources(current, recent_reviews),
             )
         except (TencentCliError, OSError, AttributeError, ValueError) as exc:
             flash(f"官方能力暂不可用：{str(exc)[:500]}", "error")
@@ -1344,6 +1353,214 @@ def _official_workflows(capabilities) -> list:
                 }
             )
     return workflows
+
+
+def _official_sources(config: GuardConfig, recent_reviews) -> Dict[str, int]:
+    guilds = 0
+    channels = 0
+    feeds = 0
+    authors = 0
+    seen_guilds = set()
+    for settings in config.tencent_channels:
+        if settings.guild_id not in seen_guilds:
+            seen_guilds.add(settings.guild_id)
+            guilds += 1
+        channels += len(settings.channels) + len(settings.auto_classify_channels)
+    seen_feeds = set()
+    seen_authors = set()
+    for item in recent_reviews:
+        if str(item.get("source") or "") != "tencent":
+            continue
+        feed_id = str(item.get("item_id") or "").strip()
+        if feed_id and feed_id not in seen_feeds:
+            seen_feeds.add(feed_id)
+            feeds += 1
+        author_id = str(item.get("author_id") or "").strip()
+        if author_id and author_id not in seen_authors:
+            seen_authors.add(author_id)
+            authors += 1
+    return {"guilds": guilds, "channels": channels, "feeds": feeds, "authors": authors}
+
+
+def _official_form_fields(schema: Dict[str, Any], config: GuardConfig, recent_reviews, submitted_values) -> list:
+    guild_options = _official_guild_options(config, recent_reviews)
+    channel_options = _official_channel_options(config, recent_reviews)
+    feed_options = _official_feed_options(recent_reviews)
+    author_options = _official_author_options(recent_reviews)
+    fields = []
+    for flag in schema.get("flags") or []:
+        if not isinstance(flag, dict):
+            continue
+        flag_name = str(flag.get("name") or "").strip()
+        if not flag_name or flag_name in {"yes", "json", "dry-run", "verbose", "log-level"}:
+            continue
+        form_name = f"param__{flag_name}"
+        value = str(submitted_values.get(form_name, flag.get("default", "")) or "").strip()
+        options = []
+        source_hint = ""
+        input_kind = "text"
+        if flag.get("enum"):
+            options = [{"value": str(option), "label": str(option)} for option in flag.get("enum") or []]
+            input_kind = "select"
+            source_hint = "来自官方枚举"
+        else:
+            normalized = flag_name.casefold().replace("_", "-")
+            if "guild" in normalized:
+                options = guild_options
+                input_kind = "select"
+                source_hint = "来自当前接入频道和最近巡检"
+            elif "channel" in normalized or "board" in normalized:
+                options = channel_options
+                input_kind = "select"
+                source_hint = "来自当前栏目配置和最近巡检"
+            elif any(token in normalized for token in ("feed", "post", "thread", "content")):
+                options = feed_options
+                input_kind = "select"
+                source_hint = "来自最近巡检记录"
+            elif any(token in normalized for token in ("user", "member", "author", "admin", "role")):
+                options = author_options
+                input_kind = "select"
+                source_hint = "来自最近帖子作者和频道成员候选"
+            elif any(token in normalized for token in ("comment", "reply")):
+                source_hint = "这类互动项当前没有后台缓存，先手填，后续可继续补自动同步"
+        value_type = str(flag.get("type") or "string").casefold()
+        if not options and value_type in {"json", "object", "array", "stringarray", "strings"}:
+            input_kind = "textarea"
+        fields.append(
+            {
+                "name": flag_name,
+                "required": bool(flag.get("required")),
+                "description": str(flag.get("description") or flag_name),
+                "value": value,
+                "input_kind": input_kind,
+                "options": options,
+                "source_hint": source_hint,
+                "type": value_type,
+                "placeholder": _official_placeholder(flag_name, value_type),
+            }
+        )
+    return fields
+
+
+def _official_guild_options(config: GuardConfig, recent_reviews) -> list:
+    options = []
+    seen = set()
+    for settings in config.tencent_channels:
+        if settings.guild_id in seen:
+            continue
+        seen.add(settings.guild_id)
+        options.append(
+            {
+                "value": settings.guild_id,
+                "label": f"{settings.name or settings.guild_id} · {settings.guild_id}",
+            }
+        )
+    for item in recent_reviews:
+        if str(item.get("source") or "") != "tencent":
+            continue
+        guild_id = str(item.get("guild_id") or "").strip()
+        if not guild_id or guild_id in seen:
+            continue
+        seen.add(guild_id)
+        options.append(
+            {
+                "value": guild_id,
+                "label": f"{item.get('guild_name') or guild_id} · {guild_id}",
+            }
+        )
+    return options
+
+
+def _official_channel_options(config: GuardConfig, recent_reviews) -> list:
+    options = []
+    seen = set()
+    for target in _configured_move_targets(config):
+        key = (target["guild_id"], target["channel_id"])
+        if key in seen:
+            continue
+        seen.add(key)
+        options.append(
+            {
+                "value": target["channel_id"],
+                "label": f"{target['guild_name']} · {target['label']} · {target['channel_id']}",
+            }
+        )
+    for item in recent_reviews:
+        if str(item.get("source") or "") != "tencent":
+            continue
+        key = (str(item.get("guild_id") or ""), str(item.get("channel_id") or ""))
+        if not key[1] or key in seen:
+            continue
+        seen.add(key)
+        options.append(
+            {
+                "value": key[1],
+                "label": f"{item.get('guild_name') or item.get('guild_id') or key[0]} · {SECTION_LABELS.get(item.get('section'), item.get('section'))} · {key[1]}",
+            }
+        )
+    return options
+
+
+def _official_feed_options(recent_reviews) -> list:
+    options = []
+    seen = set()
+    for item in recent_reviews:
+        if str(item.get("source") or "") != "tencent":
+            continue
+        feed_id = str(item.get("item_id") or "").strip()
+        if not feed_id or feed_id in seen:
+            continue
+        seen.add(feed_id)
+        title = str(item.get("title") or item.get("body") or feed_id).strip()
+        if len(title) > 42:
+            title = title[:42] + "…"
+        section_name = SECTION_LABELS.get(item.get("section"), item.get("section"))
+        options.append(
+            {
+                "value": feed_id,
+                "label": f"{item.get('guild_name') or item.get('guild_id')} · {section_name} · {title} · {feed_id}",
+            }
+        )
+    return options
+
+
+def _official_author_options(recent_reviews) -> list:
+    options = []
+    seen = set()
+    for item in recent_reviews:
+        if str(item.get("source") or "") != "tencent":
+            continue
+        author_id = str(item.get("author_id") or "").strip()
+        if not author_id or author_id in seen:
+            continue
+        seen.add(author_id)
+        title = str(item.get("title") or item.get("item_id") or "").strip()
+        if len(title) > 30:
+            title = title[:30] + "…"
+        options.append(
+            {
+                "value": author_id,
+                "label": f"{author_id} · {title}" if title else author_id,
+            }
+        )
+    return options
+
+
+def _official_placeholder(name: str, value_type: str) -> str:
+    normalized = str(name or "").casefold().replace("_", "-")
+    if "guild" in normalized:
+        return "请选择频道 ID"
+    if "channel" in normalized or "board" in normalized:
+        return "请选择栏目 ID"
+    if any(token in normalized for token in ("feed", "post", "thread", "content")):
+        return "请选择帖子 ID"
+    if any(token in normalized for token in ("user", "member", "author")):
+        return "请选择用户 ID"
+    if any(token in normalized for token in ("comment", "reply")):
+        return "请选择或填写评论 ID"
+    if value_type in {"int", "integer"}:
+        return "请输入数字 ID"
+    return "请输入值"
 
 
 def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:

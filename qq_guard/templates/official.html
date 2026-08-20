@@ -8,6 +8,7 @@
   <dl><div><dt>可用工具</dt><dd>{{ capability_count }} 项</dd></div><div><dt>QQ 授权</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实写入</dt><dd>{{ '已启用审批保护' if writes_enabled else '当前关闭，只能预演' }}</dd></div></dl>
 </section>
 {% if cli_status.error %}<div class="info-banner warning-banner"><strong>能力读取不完整</strong><p>{{ cli_status.error }}</p></div>{% endif %}
+<section class="info-banner"><strong>候选数据已同步</strong><p>当前后台已同步 {{ official_sources.guilds }} 个频道、{{ official_sources.channels }} 个栏目、{{ official_sources.feeds }} 条帖子候选和 {{ official_sources.authors }} 个作者候选；评论和回复如果暂时没有缓存，还是可以手填。</p></section>
 <section class="official-workflows" aria-label="官方工具按任务分组">
   {% for workflow in workflows %}
   <article class="official-workflow">
