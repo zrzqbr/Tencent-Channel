@@ -16,6 +16,7 @@
         <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><i class="ri-calendar-check-line" aria-hidden="true"></i><span>今日待办</span>{% if request.endpoint == 'dashboard' and summary is defined %}<b>{{ summary.pending }}</b>{% endif %}</a>
         <a class="nav-link {{ 'active' if request.endpoint in ['reviews','review_detail','ai_analysis','confirm_delete','confirm_bulk_delete','confirm_bulk_move'] }}" href="{{ url_for('reviews') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span>内容审核</span></a>
         <a class="nav-link {{ 'active' if request.endpoint == 'placements' }}" href="{{ url_for('placements') }}"><i class="ri-layout-grid-line" aria-hidden="true"></i><span>栏目调整</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['official_capabilities','official_capability'] }}" href="{{ url_for('official_capabilities') }}"><i class="ri-apps-2-line" aria-hidden="true"></i><span>官方能力</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['audit','duplicates'] }}" href="{{ url_for('audit') }}"><i class="ri-history-line" aria-hidden="true"></i><span>处理记录</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['rules','channels','test_content'] }}" href="{{ url_for('rules') }}"><i class="ri-settings-3-line" aria-hidden="true"></i><span>设置</span></a>
       </nav>

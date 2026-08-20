@@ -269,6 +269,22 @@ class TencentMonitorTests(unittest.TestCase):
 
         self.assertEqual(rows, [("test.1", "superseded"), ("test.2", "pending")])
 
+    def test_scan_reports_new_cached_and_updated_feed_counts(self):
+        feed = self.feed("B_counter", "u1", "请问", "第一次内容", 10)
+        feeds = {"200": [feed], "201": []}
+        api = FakeTencentApi(feeds, {"B_counter": self.detail("请问", "第一次内容")})
+        monitor = TencentChannelMonitor(self.config(), api)
+
+        first = monitor.scan_once()
+        second = monitor.scan_once()
+        feed["content_snippet"] = "更新后的内容"
+        api.details["B_counter"] = self.detail("请问", "更新后的内容")
+        third = monitor.scan_once()
+
+        self.assertEqual((first.new_feeds, first.cached_feeds), (1, 0))
+        self.assertEqual((second.new_feeds, second.cached_feeds), (0, 1))
+        self.assertEqual((third.updated_feeds, third.cached_feeds), (1, 0))
+
 
 if __name__ == "__main__":
     unittest.main()

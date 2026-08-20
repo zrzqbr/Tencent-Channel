@@ -86,6 +86,9 @@ class ScanReport:
     ai_reviewed: int = 0
     ai_fallbacks: int = 0
     ai_model: str = ""
+    new_feeds: int = 0
+    updated_feeds: int = 0
+    cached_feeds: int = 0
 
     def public_summary(self) -> Dict[str, Any]:
         return {
@@ -113,6 +116,9 @@ class ScanReport:
             "ai_reviewed": self.ai_reviewed,
             "ai_fallbacks": self.ai_fallbacks,
             "ai_model": self.ai_model,
+            "new_feeds": self.new_feeds,
+            "updated_feeds": self.updated_feeds,
+            "cached_feeds": self.cached_feeds,
             "guilds": list(self.guilds),
             "classification_counts": dict(self.classification_counts),
             "review_required": sum(
@@ -178,6 +184,9 @@ class TencentChannelMonitor:
         self.progress_callback = progress_callback
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
+        self._new_feeds = 0
+        self._updated_feeds = 0
+        self._cached_feeds = 0
         self._initialize_audit()
 
     def scan_once(self) -> ScanReport:
@@ -191,6 +200,9 @@ class TencentChannelMonitor:
         guild_names: List[str] = []
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
+        self._new_feeds = 0
+        self._updated_feeds = 0
+        self._cached_feeds = 0
 
         work_units = sum(
             len(settings.channels) + len(settings.auto_classify_channels)
@@ -299,6 +311,9 @@ class TencentChannelMonitor:
             ai_reviewed=self._ai_reviewed,
             ai_fallbacks=self._ai_fallbacks,
             ai_model=self.config.ai_review.model if self.config.ai_review.enabled else "",
+            new_feeds=self._new_feeds,
+            updated_feeds=self._updated_feeds,
+            cached_feeds=self._cached_feeds,
         )
         self._progress(95, "保存审核结果", "正在写入分类、风险、AI 状态与判定理由")
         self._record_scan(report)
@@ -348,10 +363,17 @@ class TencentChannelMonitor:
         feed_id = str(feed.get("feed_id") or "")
         if feed_id not in cache:
             version_key = self._feed_version(feed)
-            cached = self._cached_detail(settings.guild_id, feed_id, version_key)
+            cached, cache_state = self._cached_detail(
+                settings.guild_id, feed_id, version_key
+            )
             if cached is not None:
+                self._cached_feeds += 1
                 cache[feed_id] = cached
             else:
+                if cache_state == "updated":
+                    self._updated_feeds += 1
+                else:
+                    self._new_feeds += 1
                 cache[feed_id] = self.api.get_feed_detail(
                     settings.guild_id, channel_id, feed_id
                 )
@@ -381,22 +403,24 @@ class TencentChannelMonitor:
         guild_id: str,
         feed_id: str,
         version_key: str,
-    ) -> Optional[Dict[str, Any]]:
+    ) -> Tuple[Optional[Dict[str, Any]], str]:
         with sqlite3.connect(str(self.database_path)) as connection:
             row = connection.execute(
                 """
-                SELECT detail_json
+                SELECT version_key, detail_json
                 FROM tencent_feed_cache
-                WHERE guild_id = ? AND feed_id = ? AND version_key = ?
+                WHERE guild_id = ? AND feed_id = ?
                 """,
-                (guild_id, feed_id, version_key),
+                (guild_id, feed_id),
             ).fetchone()
         if not row:
-            return None
+            return None, "new"
+        if str(row[0]) != version_key:
+            return None, "updated"
         try:
-            return dict(json.loads(row[0]))
+            return dict(json.loads(row[1])), "cached"
         except (TypeError, ValueError, json.JSONDecodeError):
-            return None
+            return None, "updated"
 
     def _store_detail(
         self,
@@ -732,6 +756,9 @@ class TencentChannelMonitor:
             self._ensure_column(connection, "tencent_scan_runs", "ai_reviewed", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "ai_fallbacks", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "ai_model", "TEXT NOT NULL DEFAULT ''")
+            self._ensure_column(connection, "tencent_scan_runs", "new_feeds", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "updated_feeds", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "cached_feeds", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(
                 connection,
                 "tencent_duplicate_actions",
@@ -915,8 +942,8 @@ class TencentChannelMonitor:
                 INSERT INTO tencent_scan_runs
                 (started_at, finished_at, scanned_feeds, duplicates, weekly_missing_topic,
                  delete_mode, guilds_json, classification_json, ai_reviewed, ai_fallbacks,
-                 ai_model)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ai_model, new_feeds, updated_feeds, cached_feeds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report.started_at,
@@ -930,6 +957,9 @@ class TencentChannelMonitor:
                     report.ai_reviewed,
                     report.ai_fallbacks,
                     report.ai_model,
+                    report.new_feeds,
+                    report.updated_feeds,
+                    report.cached_feeds,
                 ),
             )
 

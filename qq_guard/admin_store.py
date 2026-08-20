@@ -92,6 +92,9 @@ class AdminStore:
             latest_scan = connection.execute(
                 "SELECT * FROM tencent_scan_runs ORDER BY id DESC LIMIT 1"
             ).fetchone()
+            discovered = connection.execute(
+                "SELECT COUNT(*) AS total FROM tencent_feed_cache"
+            ).fetchone()
         total = int(content["total"] or 0) + int(tencent["total"] or 0)
         pending = int(content["pending"] or 0) + int(tencent["pending"] or 0)
         deleted = int(content["deleted"] or 0) + int(tencent["deleted"] or 0)
@@ -105,6 +108,7 @@ class AdminStore:
             "by_section": by_section,
             "by_risk": by_risk,
             "latest_scan": self._scan_row(latest_scan) if latest_scan else None,
+            "discovered_feeds": int(discovered["total"] or 0),
             "ai_analyzed": int(tencent["ai_analyzed"] or 0),
             "ai_fallbacks": int(tencent["ai_fallbacks"] or 0),
         }
@@ -718,6 +722,16 @@ class AdminStore:
                     used_at TEXT
                 );
 
+                CREATE TABLE IF NOT EXISTS tencent_feed_cache (
+                    guild_id TEXT NOT NULL,
+                    channel_id TEXT NOT NULL,
+                    feed_id TEXT NOT NULL,
+                    version_key TEXT NOT NULL,
+                    detail_json TEXT NOT NULL,
+                    fetched_at TEXT NOT NULL,
+                    PRIMARY KEY(guild_id, feed_id)
+                );
+
                 CREATE INDEX IF NOT EXISTS idx_tencent_review_status
                 ON tencent_moderation_findings(review_status, risk_score DESC, id DESC);
 
@@ -749,6 +763,9 @@ class AdminStore:
                 "ai_reviewed": "INTEGER NOT NULL DEFAULT 0",
                 "ai_fallbacks": "INTEGER NOT NULL DEFAULT 0",
                 "ai_model": "TEXT NOT NULL DEFAULT ''",
+                "new_feeds": "INTEGER NOT NULL DEFAULT 0",
+                "updated_feeds": "INTEGER NOT NULL DEFAULT 0",
+                "cached_feeds": "INTEGER NOT NULL DEFAULT 0",
             }.items():
                 self._ensure_column(connection, "tencent_scan_runs", column, declaration)
 

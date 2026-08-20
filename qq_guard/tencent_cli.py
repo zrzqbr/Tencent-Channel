@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import shutil
 import subprocess
 import threading
@@ -21,6 +22,7 @@ class TencentCliClient:
         timeout_seconds: int = 30,
         min_interval_seconds: float = 0.4,
         credential_home: Optional[str] = None,
+        rate_limit_retry_seconds: float = 70.0,
     ) -> None:
         resolved = shutil.which(executable)
         if not resolved:
@@ -28,6 +30,7 @@ class TencentCliClient:
         self.executable = resolved
         self.timeout_seconds = timeout_seconds
         self.min_interval_seconds = max(0.0, float(min_interval_seconds))
+        self.rate_limit_retry_seconds = max(0.0, float(rate_limit_retry_seconds))
         resolved_home = str(
             credential_home or os.environ.get("QQ_GUARD_TENCENT_HOME", "")
         ).strip()
@@ -40,21 +43,97 @@ class TencentCliClient:
         self._lock = threading.Lock()
 
     def list_channel_feeds(self, guild_id: str, channel_id: str, count: int = 20) -> List[Dict[str, Any]]:
-        payload = self._run(
-            [
+        """Read up to ``count`` feeds, following the official opaque page cursor.
+
+        Tencent currently returns fewer items than requested on the first page for
+        some boards. Treating that first page as the complete result silently
+        misses older/newly displaced posts, so pagination must follow
+        ``feed_attach_info`` while ``has_more`` is true.
+        """
+        target_count = max(2, min(int(count), 100))
+        safe_guild = self._digits(guild_id, "guild_id")
+        safe_channel = self._digits(channel_id, "channel_id")
+        feeds: List[Dict[str, Any]] = []
+        seen_ids = set()
+        cursor = ""
+        seen_cursors = set()
+        while len(feeds) < target_count:
+            arguments = [
                 "feed",
                 "get-channel-timeline-feeds",
                 "--guild-id",
-                self._digits(guild_id, "guild_id"),
+                safe_guild,
                 "--channel-id",
-                self._digits(channel_id, "channel_id"),
+                safe_channel,
                 "--count",
-                str(max(2, min(int(count), 100))),
-                "--json",
-            ],
-            retries=5,
-        )
-        return list((payload.get("data") or {}).get("feeds") or [])
+                str(target_count - len(feeds)),
+            ]
+            if cursor:
+                arguments.extend(["--feed-attach-info", cursor])
+            arguments.append("--json")
+            payload = self._run(arguments, retries=5)
+            data = payload.get("data") or {}
+            page = list(data.get("feeds") or [])
+            for feed in page:
+                feed_id = str(feed.get("feed_id") or "")
+                if feed_id and feed_id in seen_ids:
+                    continue
+                if feed_id:
+                    seen_ids.add(feed_id)
+                feeds.append(dict(feed))
+                if len(feeds) >= target_count:
+                    break
+            next_cursor = str(data.get("feed_attach_info") or "")
+            if not data.get("has_more") or not next_cursor or next_cursor in seen_cursors:
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return feeds
+
+    def version(self) -> str:
+        payload = self._run(["version", "--json"])
+        return str((payload.get("data") or {}).get("version") or "")
+
+    def doctor(self) -> Dict[str, Any]:
+        return self._run(["doctor", "--json"])
+
+    def login_status(self) -> Dict[str, Any]:
+        return self._run(["login", "status", "--json"])
+
+    def capability_index(self) -> List[Dict[str, Any]]:
+        payload = self._run_json(["schema", "--json"], require_success=False)
+        if not isinstance(payload, list):
+            raise TencentCliError("腾讯官方 CLI 未返回能力清单")
+        return [dict(item) for item in payload if isinstance(item, dict)]
+
+    def capability_schema(self, domain: str, action: str) -> Dict[str, Any]:
+        path = self._capability_path(domain, action)
+        payload = self._run_json(["schema", path, "--json"], require_success=False)
+        if not isinstance(payload, dict) or not payload.get("command"):
+            raise TencentCliError("腾讯官方 CLI 未返回能力参数定义")
+        return dict(payload)
+
+    def execute_capability(
+        self,
+        domain: str,
+        action: str,
+        parameters: Dict[str, Any],
+        *,
+        confirmed: bool = False,
+        dry_run: bool = False,
+    ) -> Dict[str, Any]:
+        """Execute an official schema-discovered command without invoking a shell."""
+        path = self._capability_path(domain, action)
+        schema = self.capability_schema(domain, action)
+        if str(schema.get("command")) != path:
+            raise TencentCliError("官方能力定义与请求不一致")
+        arguments = [domain, action]
+        if dry_run:
+            arguments.append("--dry-run")
+        if confirmed:
+            arguments.append("--yes")
+        arguments.append("--json")
+        return self._run(arguments, retries=1, stdin_payload=parameters)
 
     def get_feed_detail(self, guild_id: str, channel_id: str, feed_id: str) -> Dict[str, Any]:
         payload = self._run(
@@ -122,7 +201,30 @@ class TencentCliClient:
             retries=3,
         )
 
-    def _run(self, arguments: Sequence[str], retries: int = 0) -> Dict[str, Any]:
+    def _run(
+        self,
+        arguments: Sequence[str],
+        retries: int = 0,
+        stdin_payload: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        payload = self._run_json(
+            arguments,
+            retries=retries,
+            stdin_payload=stdin_payload,
+            require_success=True,
+        )
+        if not isinstance(payload, dict):
+            raise TencentCliError("腾讯频道 CLI 返回格式无效")
+        return payload
+
+    def _run_json(
+        self,
+        arguments: Sequence[str],
+        retries: int = 0,
+        stdin_payload: Optional[Dict[str, Any]] = None,
+        require_success: bool = True,
+    ) -> Any:
+        rate_limit_retried = False
         for attempt in range(max(0, int(retries)) + 1):
             self._throttle()
             try:
@@ -130,6 +232,11 @@ class TencentCliClient:
                     [self.executable, *arguments],
                     capture_output=True,
                     text=True,
+                    input=(
+                        json.dumps(stdin_payload, ensure_ascii=False, separators=(",", ":"))
+                        if stdin_payload is not None
+                        else None
+                    ),
                     timeout=self.timeout_seconds,
                     check=False,
                     env=self.environment,
@@ -141,21 +248,40 @@ class TencentCliClient:
                 raise TencentCliError("腾讯频道 CLI 请求超时") from exc
             raw = (completed.stdout or "").strip()
             try:
-                start = raw.index("{")
+                object_start = raw.find("{")
+                array_start = raw.find("[")
+                candidates = [value for value in (object_start, array_start) if value >= 0]
+                if not candidates:
+                    raise ValueError("missing JSON payload")
+                start = min(candidates)
                 payload = json.loads(raw[start:])
             except (ValueError, json.JSONDecodeError) as exc:
                 message = (completed.stderr or raw or "腾讯频道 CLI 未返回 JSON").strip()
                 raise TencentCliError(message[:500]) from exc
-            if completed.returncode == 0 and payload.get("success", False):
+            if completed.returncode == 0 and (
+                not require_success
+                or (isinstance(payload, dict) and payload.get("success", False))
+            ):
                 return payload
-            error = payload.get("error") or {}
+            error = payload.get("error") if isinstance(payload, dict) else {}
             message = error.get("message") if isinstance(error, dict) else str(error)
             message = message or "腾讯频道 CLI 调用失败"
-            if self._is_rate_limit(message) and attempt < retries:
-                time.sleep(min(12.0, 1.5 * (2**attempt)))
+            if self._is_rate_limit(message) and attempt < retries and not rate_limit_retried:
+                rate_limit_retried = True
+                time.sleep(self.rate_limit_retry_seconds)
                 continue
             raise TencentCliError(message)
         raise TencentCliError("腾讯频道 CLI 调用失败")
+
+    @staticmethod
+    def _capability_path(domain: str, action: str) -> str:
+        safe_domain = str(domain).strip()
+        safe_action = str(action).strip()
+        if safe_domain not in {"feed", "manage"}:
+            raise TencentCliError("不支持的官方能力域")
+        if not re.fullmatch(r"[a-z][a-z0-9-]{1,79}", safe_action):
+            raise TencentCliError("官方能力名称格式无效")
+        return f"{safe_domain}.{safe_action}"
 
     def _throttle(self) -> None:
         with self._lock:

@@ -1,0 +1,48 @@
+{% extends "base.html" %}
+{% block title %}{{ capability.title }} · 腾讯官方能力{% endblock %}
+{% block heading %}{{ capability.title }}{% endblock %}
+{% block page_intro %}<p class="page-subtitle">{{ schema.description }} · {{ capability.path }}</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('official_capabilities') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回官方能力</a>{% endblock %}
+{% block content %}
+<section class="info-banner {{ 'warning-banner' if capability.is_write }}">
+  <strong>{{ '高风险、不可逆操作' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只读取腾讯官方数据' }}</strong>
+  <p>{% if capability.is_write %}默认选择安全预演，不会产生真实修改。选择真实执行时必须重新验证管理员身份并记录原因。{% else %}查询结果会隐藏 Token、Cookie、分页游标及其他登录凭据。{% endif %}</p>
+</section>
+{% if capability.note %}<section class="info-banner warning-banner"><strong>官方使用约束</strong><p>{{ capability.note }}</p></section>{% endif %}
+{% if error %}<div class="flash error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ error }}</div>{% endif %}
+<section class="panel">
+  <div class="panel-title"><div><h2>填写官方参数</h2><p>带“必填”的项目必须填写；不需要的项目留空。</p></div><span class="risk-pill {{ 'risk-high' if capability.is_high_risk else 'risk-medium' if capability.is_write else 'risk-low' }}">{{ '高风险' if capability.is_high_risk else '写操作' if capability.is_write else '只读' }}</span></div>
+  <form method="post" class="stack-form official-form" data-official-form>
+    <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+    <div class="official-fields">
+    {% for flag in schema.flags %}
+      {% if flag.name not in ['yes','json','dry-run','verbose','log-level'] %}
+      <label>{{ flag.description or flag.name }}{% if flag.required %}<b>必填</b>{% endif %}
+        {% if flag.enum %}<select name="param__{{ flag.name }}" {{ 'required' if flag.required }}><option value="">请选择</option>{% for option in flag.enum %}<option value="{{ option }}">{{ option }}</option>{% endfor %}</select>
+        {% elif flag.type in ['json','object','array','stringArray','strings'] %}<textarea name="param__{{ flag.name }}" rows="3" placeholder='请输入 JSON，例如 ["值1","值2"]' {{ 'required' if flag.required }}></textarea>
+        {% else %}<input name="param__{{ flag.name }}" type="{{ 'number' if flag.type in ['int','integer'] else 'text' }}" value="{{ flag.get('default', '') }}" {{ 'required' if flag.required }} autocomplete="off">{% endif %}
+        {% if flag.enum %}<small>可选值：{{ flag.enum|join('、') }}</small>{% endif %}
+      </label>
+      {% endif %}
+    {% endfor %}
+    </div>
+    <details class="advanced-parameters"><summary>高级 JSON 参数</summary><p>仅用于官方 Schema 中的复杂对象或数组；会与上面的字段合并。</p><textarea name="advanced_json" rows="5" placeholder='{"字段名":"值"}'></textarea></details>
+    {% if capability.is_write %}
+    <fieldset class="execution-box"><legend>执行方式</legend>
+      <label class="radio-option"><input type="radio" name="execution_mode" value="preview" checked><span><strong>安全预演</strong><small>只检查参数和影响，不真实修改</small></span></label>
+      <label class="radio-option"><input type="radio" name="execution_mode" value="live" {{ 'disabled' if not writes_enabled }}><span><strong>真实执行</strong><small>{{ '需要密码、原因和确认' if writes_enabled else '生产环境当前未开启' }}</small></span></label>
+    </fieldset>
+    <section class="live-confirmation" data-live-confirmation hidden>
+      <label>操作原因<input name="reason" maxlength="300" placeholder="至少填写 4 个字"></label>
+      <label>管理员密码<input name="password" type="password" autocomplete="current-password"></label>
+      <label class="confirm-check"><input type="checkbox" name="confirmation" value="confirmed"><span>我已核对目标对象，理解该操作会修改真实腾讯频道。</span></label>
+      {% if capability.is_high_risk %}<label>高风险确认文字<input name="confirmation_phrase" placeholder="请输入：确认执行" autocomplete="off"></label>{% endif %}
+    </section>
+    {% endif %}
+    <button class="{{ 'danger-button' if capability.is_high_risk else 'primary-button' }}" type="submit">{{ '预演或执行此操作' if capability.is_write else '运行查询' }}</button>
+  </form>
+</section>
+{% if result is not none %}
+<section class="panel official-result"><div class="panel-title"><div><h2>官方返回结果</h2><p>敏感登录字段已经隐藏，本次操作已写入审计记录。</p></div></div><pre>{{ result|tojson(indent=2) }}</pre></section>
+{% endif %}
+{% endblock %}

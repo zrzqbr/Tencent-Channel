@@ -22,6 +22,50 @@ class FakeTencentClient:
     def __init__(self) -> None:
         self.deleted = []
         self.moved = []
+        self.capability_calls = []
+
+    def capability_index(self):
+        return [
+            {
+                "domain": "feed",
+                "commands": [
+                    {
+                        "use": "get-feed-detail",
+                        "short": "查看帖子详情",
+                        "group": "read",
+                        "risk": "read",
+                    },
+                    {
+                        "use": "del-feed",
+                        "short": "删除帖子",
+                        "group": "write",
+                        "risk": "high-risk-write",
+                    },
+                ],
+            }
+        ]
+
+    def capability_schema(self, domain, action):
+        flags = [
+            {"name": "feed-id", "type": "string", "required": True, "description": "帖子 ID"}
+        ]
+        return {
+            "command": f"{domain}.{action}",
+            "description": "测试官方能力",
+            "group": "read" if action == "get-feed-detail" else "write",
+            "risk": "read" if action == "get-feed-detail" else "high-risk-write",
+            "flags": flags,
+        }
+
+    def execute_capability(self, domain, action, parameters, confirmed=False, dry_run=False):
+        self.capability_calls.append((domain, action, parameters, confirmed, dry_run))
+        return {"success": True, "data": {"title": "官方返回"}}
+
+    def version(self):
+        return "test-version"
+
+    def login_status(self):
+        return {"success": True, "data": {"valid": True, "message": "已登录"}}
 
     def delete_feed(self, guild_id, channel_id, feed_id, create_time, live):
         self.deleted.append((guild_id, channel_id, feed_id, create_time, live))
@@ -245,10 +289,43 @@ class WebTests(unittest.TestCase):
 
     def test_all_admin_pages_render_after_login(self):
         self.login()
-        for path in ["/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test"]:
+        for path in ["/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test", "/official"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
+
+    def test_official_read_capability_executes_and_is_audited(self):
+        response = self.login()
+        response = self.client.get("/official/feed/get-feed-detail")
+        self.assertEqual(response.status_code, 200)
+        response = self.client.post(
+            "/official/feed/get-feed-detail",
+            data={"csrf_token": self.csrf(response), "param__feed-id": "B_test"},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("官方返回".encode("utf-8"), response.data)
+        self.assertEqual(
+            self.fake_cli.capability_calls[-1],
+            ("feed", "get-feed-detail", {"feed_id": "B_test"}, False, False),
+        )
+
+    def test_official_high_risk_live_action_requires_password(self):
+        self.login()
+        response = self.client.get("/official/feed/del-feed")
+        response = self.client.post(
+            "/official/feed/del-feed",
+            data={
+                "csrf_token": self.csrf(response),
+                "param__feed-id": "B_test",
+                "execution_mode": "live",
+                "password": "wrong",
+                "reason": "测试高风险保护",
+                "confirmation": "confirmed",
+                "confirmation_phrase": "确认执行",
+            },
+        )
+        self.assertIn("尚未开启官方写操作".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.capability_calls, [])
 
     def test_content_test_explains_classification(self):
         response = self.login()

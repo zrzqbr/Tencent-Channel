@@ -20,6 +20,15 @@
 </section>
 <div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在建立安全连接</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮 AI 分析记录</a></div>
 
+{% set latest = summary.latest_scan or {} %}
+<section class="scan-metric-grid" aria-label="巡检数量说明">
+  <article><span>本轮读取</span><strong data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</strong><small>本次从腾讯接口取得</small></article>
+  <article><span>本轮新增</span><strong data-scan-metric="new_feeds">{{ latest.get('new_feeds', 0) }}</strong><small>第一次发现的帖子</small></article>
+  <article><span>内容更新</span><strong data-scan-metric="updated_feeds">{{ latest.get('updated_feeds', 0) }}</strong><small>正文或摘要有变化</small></article>
+  <article><span>直接用缓存</span><strong data-scan-metric="cached_feeds">{{ latest.get('cached_feeds', 0) }}</strong><small>没有重复读取详情</small></article>
+  <article><span>累计收录</span><strong>{{ summary.discovered_feeds }}</strong><small>数据库中的不同帖子</small></article>
+</section>
+
 <section class="task-metrics" aria-label="今日任务统计">
   <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>待处理</span><strong>{{ summary.pending }}</strong><small>等待管理员确认</small></a>
   <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>高风险</span><strong>{{ pending_high_count }}</strong><small>优先核对</small></a>

@@ -31,9 +31,18 @@ from .config import GuardConfig
 from .config_editor import ConfigEditor
 from .models import IncomingContent, ItemKind, Section
 from .moderation import ModerationEngine
+from .official_capabilities import (
+    OFFICIAL_SKILL_VERSION,
+    grouped_capabilities,
+    normalize_index,
+    normalize_command_parameters,
+    parse_parameters,
+    safe_audit_parameters,
+    safe_payload,
+)
 from .placement import group_placement_suggestions, placement_review
 from .scan_control import ScanLock, ScanStatusStore
-from .tencent_cli import TencentCliClient
+from .tencent_cli import TencentCliClient, TencentCliError
 from .tencent_monitor import TencentChannelMonitor
 
 
@@ -799,6 +808,123 @@ def create_app(
     def audit():
         return render_template("audit.html", items=store.audit_log(), scans=store.scans())
 
+    @app.get("/official")
+    @login_required
+    def official_capabilities():
+        capabilities = []
+        cli_status: Dict[str, Any] = {
+            "connected": False,
+            "version": "",
+            "login": "无法确认",
+            "error": "",
+        }
+        try:
+            client = cli_factory()
+            capabilities = normalize_index(client.capability_index())
+            cli_status["version"] = client.version()
+            login_state = client.login_status()
+            login_data = login_state.get("data") or {}
+            cli_status["connected"] = bool(login_data.get("valid"))
+            cli_status["login"] = str(login_data.get("message") or "已连接")
+        except (TencentCliError, OSError, AttributeError, ValueError) as exc:
+            cli_status["error"] = str(exc)[:500]
+        return render_template(
+            "official.html",
+            groups=grouped_capabilities(capabilities),
+            capability_count=len(capabilities),
+            cli_status=cli_status,
+            skill_version=OFFICIAL_SKILL_VERSION,
+            writes_enabled=official_writes_enabled(),
+        )
+
+    @app.route("/official/<domain>/<action>", methods=["GET", "POST"])
+    @login_required
+    def official_capability(domain: str, action: str):
+        result = None
+        error = ""
+        try:
+            client = cli_factory()
+            capabilities = normalize_index(client.capability_index())
+            capability = next(
+                (
+                    item
+                    for item in capabilities
+                    if item["domain"] == domain and item["action"] == action
+                ),
+                None,
+            )
+            if capability is None:
+                abort(404)
+            schema = client.capability_schema(domain, action)
+            if request.method == "POST":
+                try:
+                    parameters = normalize_command_parameters(
+                        domain, action, parse_parameters(schema, request.form)
+                    )
+                    _reject_unsafe_file_parameters(parameters)
+                    is_write = bool(capability["is_write"])
+                    execution_mode = request.form.get("execution_mode", "preview")
+                    live = is_write and execution_mode == "live"
+                    reason = str(request.form.get("reason") or "").strip()
+                    if live:
+                        if not official_writes_enabled():
+                            raise ValueError("生产环境尚未开启官方写操作")
+                        if not check_password_hash(
+                            password_hash, request.form.get("password", "")
+                        ):
+                            raise ValueError("管理员密码验证失败")
+                        if len(reason) < 4:
+                            raise ValueError("真实操作必须填写至少 4 个字的原因")
+                        if request.form.get("confirmation") != "confirmed":
+                            raise ValueError("请勾选确认影响范围")
+                        if capability["is_high_risk"] and request.form.get(
+                            "confirmation_phrase", ""
+                        ).strip() != "确认执行":
+                            raise ValueError("高风险操作必须输入“确认执行”")
+                    result = safe_payload(
+                        client.execute_capability(
+                            domain,
+                            action,
+                            parameters,
+                            confirmed=live,
+                            dry_run=is_write and not live,
+                        )
+                    )
+                    store.record_audit(
+                        "admin",
+                        "official.execute" if live else "official.preview" if is_write else "official.read",
+                        domain,
+                        action,
+                        {
+                            "risk": capability["risk"],
+                            "reason": reason if live else "",
+                            "parameters": safe_audit_parameters(parameters),
+                            "success": bool(result.get("success", True)) if isinstance(result, dict) else True,
+                        },
+                        remote_ip(),
+                    )
+                except (TencentCliError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                    error = str(exc)[:800]
+                    store.record_audit(
+                        "admin",
+                        "official.failed",
+                        domain,
+                        action,
+                        {"error": error},
+                        remote_ip(),
+                    )
+            return render_template(
+                "official_action.html",
+                capability=capability,
+                schema=schema,
+                result=result,
+                error=error,
+                writes_enabled=official_writes_enabled(),
+            )
+        except (TencentCliError, OSError, AttributeError, ValueError) as exc:
+            flash(f"官方能力暂不可用：{str(exc)[:500]}", "error")
+            return redirect(url_for("official_capabilities"))
+
     @app.get("/rules")
     @login_required
     def rules():
@@ -1033,6 +1159,9 @@ def create_app(
                     {
                         "job_id": job_id,
                         "scanned_feeds": summary["scanned_feeds"],
+                        "new_feeds": summary.get("new_feeds", 0),
+                        "updated_feeds": summary.get("updated_feeds", 0),
+                        "cached_feeds": summary.get("cached_feeds", 0),
                         "duplicates": summary["duplicates"],
                     },
                     requester_ip,
@@ -1097,6 +1226,17 @@ def safe_next(value: str) -> str:
 
 def manual_delete_enabled() -> bool:
     return os.environ.get("QQ_GUARD_MANUAL_DELETE_ENABLED", "false").casefold() == "true"
+
+
+def official_writes_enabled() -> bool:
+    return os.environ.get("QQ_GUARD_OFFICIAL_WRITES_ENABLED", "false").casefold() == "true"
+
+
+def _reject_unsafe_file_parameters(parameters: Dict[str, Any]) -> None:
+    for key in parameters:
+        normalized = str(key).casefold()
+        if "path" in normalized or normalized.endswith("file") or normalized.endswith("files"):
+            raise ValueError("涉及服务器文件的能力暂不接受路径输入，请使用后续受控上传入口")
 
 
 def _selected_row_ids(values) -> list:

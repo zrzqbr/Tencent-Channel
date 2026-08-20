@@ -40,6 +40,11 @@ if (scanForm) {
           hour: '2-digit', minute: '2-digit', hour12: false,
         }).format(new Date(state.finished_at)).replaceAll('/', '-');
       }
+      const summary = state.summary || {};
+      document.querySelectorAll('[data-scan-metric]').forEach((item) => {
+        const key = item.dataset.scanMetric;
+        if (Object.prototype.hasOwnProperty.call(summary, key)) item.textContent = String(summary[key] || 0);
+      });
       window.sessionStorage.removeItem('qqGuardScanStatusUrl');
     }
     if (state.status === 'failed') {
@@ -125,4 +130,20 @@ document.querySelectorAll('[data-confirm-action-form]').forEach((form) => {
     button.disabled = true;
     button.textContent = '正在提交，请勿重复点击…';
   });
+});
+
+document.querySelectorAll('[data-official-form]').forEach((form) => {
+  const confirmation = form.querySelector('[data-live-confirmation]');
+  const modes = Array.from(form.querySelectorAll('input[name="execution_mode"]'));
+  if (!confirmation || !modes.length) return;
+  const update = () => {
+    const live = modes.some((item) => item.checked && item.value === 'live');
+    confirmation.hidden = !live;
+    confirmation.querySelectorAll('input').forEach((input) => {
+      if (['reason', 'password', 'confirmation'].includes(input.name)) input.required = live;
+      if (input.name === 'confirmation_phrase') input.required = live;
+    });
+  };
+  modes.forEach((item) => item.addEventListener('change', update));
+  update();
 });

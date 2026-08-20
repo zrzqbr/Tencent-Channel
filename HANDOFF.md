@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.5.4
+- Python 包版本：0.6.0（已接入腾讯官方 Skill 能力中心与帖子分页增量统计）
 
 ## 2. 当前生产快照
 
@@ -138,6 +138,18 @@ QQ 频道新内容
 ~~~
 
 ## 6. 最近完成的关键修改
+
+### 0.6.0：腾讯官方 Skill 全能力入口
+
+- 官方 Skill 基线为 `tencent-channel-community 1.1.5`，后台“官方能力”页面从服务器 CLI 实时读取 Schema，因此腾讯后续新增命令可自动出现在能力目录。
+- 覆盖频道与栏目、帖子与内容、评论与互动、成员与权限、通知与私信、运营快捷工具。
+- 查询操作直接运行；写操作默认 `dry-run` 预演。
+- 真实写操作需 `QQ_GUARD_OFFICIAL_WRITES_ENABLED=true`、管理员密码、至少 4 个字的原因和影响确认；高风险操作还需输入“确认执行”。
+- Token、Cookie、会话密钥、分页游标和 raw 字段不会显示在网页或审计详情。
+- 涉及服务器文件路径的命令暂不接受路径输入，必须以后接入受控上传区，避免任意文件读取。
+- 帖子列表现已跟随官方 `feed_attach_info` 分页，不再把第一页误认为全部结果。
+- 巡检新增本轮读取、新增、更新、缓存和累计收录五类统计。
+- 官方通知自动推送仍仅支持 OpenClaw；网站使用分页增量轮询，不伪装为实时推送。
 
 ### b91e587：后台工作台重构
 
