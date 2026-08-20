@@ -2,7 +2,7 @@
 {% block title %}严格去重记录 · 腾讯频道治理{% endblock %}
 {% block heading %}严格去重记录{% endblock %}
 {% block page_intro %}<p class="page-subtitle">仅记录同作者、同栏目、连续且完全相同的内容</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('audit') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回处理记录</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('audit') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回操作记录</a>{% endblock %}
 {% block content %}
 <section class="info-banner"><strong>判定边界</strong><p>仅命中同一频道、同一栏目、同一作者、连续且标题正文媒体完全一致的后一条内容。</p></section>
 <section class="panel"><div class="table-wrap"><table><thead><tr><th>频道</th><th>栏目</th><th>较新内容</th><th>上一条内容</th><th>处理结果</th><th>时间</th></tr></thead><tbody>

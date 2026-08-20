@@ -8,7 +8,7 @@
   <button class="primary-button scan-button" type="submit" data-scan-button><i class="ri-radar-line" aria-hidden="true"></i>立即巡检</button>
 </form>
 {% endblock %}
-{% block page_intro %}<p class="page-subtitle">先处理高风险内容，再确认栏目调整</p>{% endblock %}
+{% block page_intro %}<p class="page-subtitle">按“下一步”处理：先删风险，再移栏目，没问题就保留</p>{% endblock %}
 {% block content %}
 <section class="scan-strip" aria-label="巡检流程">
   <div class="scan-stage completed"><i class="ri-download-cloud-2-line" aria-hidden="true"></i><span><strong>抓取内容</strong><small>读取频道新内容</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
@@ -30,59 +30,42 @@
 </section>
 
 <section class="task-metrics" aria-label="今日任务统计">
-  <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>待处理</span><strong>{{ summary.pending }}</strong><small>等待管理员确认</small></a>
-  <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>高风险</span><strong>{{ pending_high_count }}</strong><small>优先核对</small></a>
-  <a class="task-metric warning" href="{{ url_for('dashboard', queue='placement') }}"><span>栏目待调整</span><strong>{{ queue_counts.placement }}</strong><small>确认后移动原帖</small></a>
-  <a class="task-metric info" href="{{ url_for('dashboard', queue='incomplete') }}"><span>AI 未完整分析</span><strong>{{ queue_counts.incomplete }}</strong><small>不会自动处置</small></a>
+  <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>今天要处理</span><strong>{{ summary.pending }}</strong><small>等你确认的内容</small></a>
+  <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>可能要删除</span><strong>{{ pending_high_count }}</strong><small>先看原因再确认</small></a>
+  <a class="task-metric warning" href="{{ url_for('dashboard', queue='placement') }}"><span>放错栏目</span><strong>{{ queue_counts.placement }}</strong><small>移动原帖，不重发</small></a>
+  <a class="task-metric info" href="{{ url_for('dashboard', queue='incomplete') }}"><span>机器没看完整</span><strong>{{ queue_counts.incomplete }}</strong><small>只能人工判断</small></a>
 </section>
 
 <div class="review-workspace">
   <section class="review-queue" aria-label="审核任务队列">
     <div class="queue-tabs" role="tablist" aria-label="审核建议分类">
-      <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">建议放行 <b>{{ queue_counts.allow }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">建议调整栏目 <b>{{ queue_counts.placement }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'review' }}" href="{{ url_for('dashboard', queue='review') }}">需人工核对 <b>{{ queue_counts.review }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">建议删除 <b>{{ queue_counts.delete }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">AI 未完整分析 <b>{{ queue_counts.incomplete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">可能要删除 <b>{{ queue_counts.delete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">放错栏目 <b>{{ queue_counts.placement }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'review' }}" href="{{ url_for('dashboard', queue='review') }}">需要你判断 <b>{{ queue_counts.review }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">机器没看完整 <b>{{ queue_counts.incomplete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">没问题，可保留 <b>{{ queue_counts.allow }}</b></a>
     </div>
-    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>明确处理建议</span><span>风险级别</span><span>问题类型</span><span>操作</span></div>
+    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>下一步</span><span>风险</span><span>原因</span><span>操作</span></div>
     <div class="queue-list">
       {% for item in reviews %}{% set item_key = item.source ~ '-' ~ item.id %}
-      <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}">
+      <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}" data-review-row="{{ item_key }}">
         <div class="queue-content"><span class="risk-dot risk-{{ item.risk_level }}"></span><span><strong>{{ item.title or item.body|truncate(34) or '无标题内容' }}</strong><small>{{ item.body|striptags|truncate(46) or '暂无正文摘要' }}</small></span></div>
         <div><strong>{{ item.author_id|truncate(18, True, '') or '未知作者' }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }}</small></div>
         <div><strong class="queue-summary">{{ item.guidance.action }}</strong><small>{{ item.guidance.why|truncate(54) }}</small></div>
         <div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 {{ item.risk_score }}</span></div>
         <div><strong>{{ item.guidance.issue }}</strong><small>{{ item.placement_suggestion.move_target.label if item.placement_suggestion else action_labels.get(item.action, item.action) }}</small></div>
-        <div><a class="row-review-button" href="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}#review-detail">审核</a></div>
+        <div><a class="row-review-button" href="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}" data-review-link="{{ item_key }}">处理</a></div>
       </article>
       {% else %}<div class="queue-empty"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><strong>这一类任务已经处理完了</strong><p>可以切换上方标签继续处理其他内容。</p></div>{% endfor %}
     </div>
-    <div class="queue-footer"><span>当前显示 {{ reviews|length }} 条</span><a href="{{ url_for('reviews', status='pending') }}">进入全部内容审核</a></div>
+    <div class="queue-footer"><span>当前显示 {{ reviews|length }} 条</span><a href="{{ url_for('reviews', status='pending') }}">进入全部内容</a></div>
   </section>
 
-  <aside class="review-drawer" id="review-detail">
-    {% if selected_item %}
-    <div class="drawer-title"><div><span>内容详情</span><h2>{{ selected_item.title or '无标题内容' }}</h2></div><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">完整详情</a></div>
-    <section class="recommendation-card decision-{{ selected_item.ui_queue }}"><div class="recommendation-head"><span>AI 审核结果</span><span class="risk-pill risk-{{ selected_item.risk_level }}">{{ risk_labels.get(selected_item.risk_level, selected_item.risk_level) }}风险 {{ selected_item.risk_score }}</span></div><strong class="decision-status">{{ selected_item.guidance.status }}</strong><h3>你要做：{{ selected_item.guidance.action }}</h3><p class="decision-why"><b>原因：</b>{{ selected_item.guidance.why }}</p>
-      <div class="primary-review-action">
-      {% if selected_item.ui_queue == 'allow' %}<form action="{{ url_for('resolve_review', source=selected_item.source, row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="resolution" value="approved"><input type="hidden" name="notes" value="按AI建议保留"><button class="success-button full" type="submit">确认保留</button></form>
-      {% elif selected_item.ui_queue == 'placement' and selected_item.source == 'tencent' %}<form action="{{ url_for('prepare_bulk_move') }}" method="post" class="drawer-move-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ selected_item.id }}"><select name="move_target" aria-label="选择目标栏目" required>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if selected_item.placement_suggestion and target.key == selected_item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select><button class="primary-button full" type="submit">确认移动栏目</button></form>
-      {% elif selected_item.ui_queue == 'delete' and selected_item.source == 'tencent' %}<form action="{{ url_for('prepare_delete', row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or selected_item.delete_status == 'deleted' }}>{{ '已删除' if selected_item.delete_status == 'deleted' else '进入删除确认' }}</button></form>
-      {% else %}<a class="primary-button full" href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">查看原帖后决定</a>{% endif %}
-      </div>
-      <details class="decision-details"><summary>查看证据和评分明细</summary><dl><div><dt>问题类型</dt><dd>{{ selected_item.guidance.issue }}</dd></div><div><dt>命中证据</dt><dd>{{ selected_item.guidance.evidence }}</dd></div><div><dt>分数构成</dt><dd>{{ selected_item.guidance.score }}</dd></div></dl></details>
-    </section>
-    <details class="original-details"><summary>查看原帖摘要</summary><section class="original-preview"><p>{{ selected_item.body|striptags|truncate(260) or '本条记录暂未保存正文，可在完整详情中查看。' }}</p><dl><div><dt>作者</dt><dd>{{ selected_item.author_id or '未返回' }}</dd></div><div><dt>来源栏目</dt><dd>{{ section_labels.get(selected_item.section, selected_item.section) }}</dd></div><div><dt>频道</dt><dd>{{ selected_item.guild_name or selected_item.guild_id }}</dd></div></dl></section></details>
-    {% if selected_item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>结论与风险不一致，请人工复核</strong><small>系统已锁定自动放行，必须由管理员确认。</small></span></div>{% endif %}
-    {% if selected_item.analysis_source != 'ai' and ai_status.status == 'ready' %}<div class="consistency-warning"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>本条 AI 分析未完整执行</strong><small>{{ selected_item.ai_error or '当前记录只有规则结论，不会自动执行普通内容处置。' }}</small></span></div>{% endif %}
-    <details class="other-actions"><summary>使用其他处理方式</summary><section class="drawer-actions"><h3>其他处理方式</h3>
-      <form action="{{ url_for('resolve_review', source=selected_item.source, row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="resolution" value="approved"><input type="hidden" name="notes" value="在今日待办确认保留"><button class="secondary-button full" type="submit" {{ 'disabled' if selected_item.has_conflict }}>保留</button></form>
-      {% if selected_item.source == 'tencent' %}<form action="{{ url_for('prepare_bulk_move') }}" method="post" class="drawer-move-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ selected_item.id }}"><select name="move_target" aria-label="选择目标栏目" required><option value="">调整栏目…</option>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if selected_item.placement_suggestion and target.key == selected_item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select><button class="primary-button full" type="submit">确认栏目</button></form>
-      <form action="{{ url_for('prepare_delete', row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or selected_item.delete_status == 'deleted' }}>{{ '已删除' if selected_item.delete_status == 'deleted' else '删除（需二次确认）' }}</button></form>{% endif %}
-      <p>移动或删除都需要填写理由、重新输入密码并二次确认。</p>
-    </section></details>
-    {% else %}<div class="drawer-empty"><i class="ri-file-search-line" aria-hidden="true"></i><strong>当前没有待审核内容</strong><p>切换任务标签，或点击“立即巡检”获取最新内容。</p></div>{% endif %}
+  <aside class="review-drawer" id="review-detail" data-review-drawer>
+    {% include "partials/dashboard_drawer.html" %}
   </aside>
+</div>
+<div class="review-drawer-templates" hidden>
+  {% for item in reviews %}{% set selected_item = item %}<template data-review-template="{{ item.source }}-{{ item.id }}">{% include "partials/dashboard_drawer.html" %}</template>{% endfor %}
 </div>
 {% endblock %}

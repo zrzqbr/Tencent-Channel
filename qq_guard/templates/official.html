@@ -1,21 +1,29 @@
 {% extends "base.html" %}
-{% block title %}腾讯官方能力 · 腾讯频道治理{% endblock %}
-{% block heading %}腾讯官方能力{% endblock %}
-{% block page_intro %}<p class="page-subtitle">官方 Skill 的频道、帖子、互动、成员和运营能力统一入口</p>{% endblock %}
+{% block title %}官方工具 · 腾讯频道治理{% endblock %}
+{% block heading %}官方工具{% endblock %}
+{% block page_intro %}<p class="page-subtitle">把腾讯官方读、写、改、审计能力做成可操作入口</p>{% endblock %}
 {% block content %}
 <section class="official-hero">
-  <div><span class="mode-badge"><i></i>官方 Skill {{ skill_version }}</span><h2>已识别 {{ capability_count }} 项官方能力</h2><p>查询可以直接运行；任何写入操作默认只做预演，真实执行必须重新验证密码、填写原因并确认影响范围。</p></div>
-  <dl><div><dt>服务器 CLI</dt><dd>{{ cli_status.version or '未读取' }}</dd></div><div><dt>QQ 授权</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实写操作</dt><dd>{{ '已启用审批保护' if writes_enabled else '当前关闭' }}</dd></div></dl>
+  <div><span class="mode-badge"><i></i>官方 Skill {{ skill_version }}</span><h2>官方工具台</h2><p>这里不是给技术同学看的命令列表，而是后台可用的操作入口：先查清楚，再安全预演，需要真实修改时重新验证密码并写入审计。</p></div>
+  <dl><div><dt>可用工具</dt><dd>{{ capability_count }} 项</dd></div><div><dt>QQ 授权</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实写入</dt><dd>{{ '已启用审批保护' if writes_enabled else '当前关闭，只能预演' }}</dd></div></dl>
 </section>
 {% if cli_status.error %}<div class="info-banner warning-banner"><strong>能力读取不完整</strong><p>{{ cli_status.error }}</p></div>{% endif %}
-<section class="info-banner"><strong>如何使用</strong><p>先从下方选择业务动作。页面会实时读取腾讯 CLI 的官方参数定义；写操作可先“安全预演”，确认结果无误后再选择真实执行。</p></section>
+<section class="official-workflows" aria-label="官方工具按任务分组">
+  {% for workflow in workflows %}
+  <article class="official-workflow">
+    <div><strong>{{ workflow.title }}</strong><p>{{ workflow.description }}</p></div>
+    <div>{% for item in workflow['items'] %}<a class="{{ 'danger-outline' if item.is_high_risk else 'secondary-button' if item.is_write else 'ghost-button' }} compact" href="{{ url_for('official_capability', domain=item.domain, action=item.action) }}">{{ item.title }}</a>{% endfor %}</div>
+  </article>
+  {% endfor %}
+</section>
+<section class="info-banner"><strong>操作边界</strong><p>只读查询会直接运行；写操作默认先预演，不会改动腾讯频道。真实执行必须开启服务器开关、填写原因、输入管理员密码，并自动进入操作记录。</p></section>
 {% for group in groups %}
 <section class="panel official-group">
-  <div class="panel-title"><div><h2>{{ group.label }}</h2><p>{{ group['items']|length }} 项能力</p></div></div>
+  <div class="panel-title"><div><h2>{{ group.label }}</h2><p>{{ group['items']|length }} 项官方工具</p></div></div>
   <div class="capability-grid">
     {% for item in group['items'] %}
     <a class="capability-card {{ 'high-risk' if item.is_high_risk else 'write' if item.is_write else 'read' }}" href="{{ url_for('official_capability', domain=item.domain, action=item.action) }}">
-      <span class="capability-risk">{{ '高风险操作' if item.is_high_risk else '写操作' if item.is_write else '只读查询' }}</span>
+      <span class="capability-risk">{{ '删帖/禁言类' if item.is_high_risk else '会修改频道' if item.is_write else '只读查询' }}</span>
       <strong>{{ item.title }}</strong><small>{{ item.path }}</small>
     </a>
     {% endfor %}
@@ -24,5 +32,5 @@
 {% else %}
 <section class="panel"><div class="empty tall">当前未能从服务器 CLI 读取官方能力，请先检查登录和 CLI 版本。</div></section>
 {% endfor %}
-<section class="info-banner warning-banner"><strong>通知能力说明</strong><p>官方实时通知推送仅支持 OpenClaw。当前网页后台会保留这些能力入口，但内容治理仍使用分页增量巡检，不会伪装成实时推送。</p></section>
+<section class="info-banner warning-banner"><strong>通知说明</strong><p>官方实时通知推送仅支持 OpenClaw。当前网页后台保留通知工具入口，但内容治理仍使用分页增量巡检。</p></section>
 {% endblock %}

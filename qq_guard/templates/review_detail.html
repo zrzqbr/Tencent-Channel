@@ -2,7 +2,7 @@
 {% block title %}审核详情 · 腾讯频道治理{% endblock %}
 {% block heading %}审核详情{% endblock %}
 {% block page_intro %}<p class="page-subtitle">核对原文、AI 证据和处理边界后再作决定</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容审核</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回全部内容</a>{% endblock %}
 {% block content %}
 <div class="detail-grid">
   <section class="panel detail-main">
@@ -17,8 +17,8 @@
       <div><dt>分析来源</dt><dd>{{ 'AI 语义审核' if item.analysis_source == 'ai' else '规则降级' }}</dd></div><div><dt>模型 / 置信度</dt><dd>{{ item.ai_model or '未调用' }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</dd></div>
     </dl>
     <section class="detail-recommendation">
-      <div><span>明确处理建议</span><h3>{{ item.guidance.action }}</h3></div>
-      <dl><div><dt>问题类型</dt><dd>{{ item.guidance.issue }}</dd></div><div><dt>为什么</dt><dd>{{ item.guidance.why }}</dd></div><div><dt>命中证据</dt><dd>{{ item.guidance.evidence }}</dd></div><div><dt>分数构成</dt><dd>{{ item.guidance.score }}</dd></div></dl>
+      <div><span>建议你做什么</span><h3>{{ item.guidance.action }}</h3></div>
+      <dl><div><dt>是什么问题</dt><dd>{{ item.guidance.issue }}</dd></div><div><dt>为什么</dt><dd>{{ item.guidance.why }}</dd></div><div><dt>关键证据</dt><dd>{{ item.guidance.evidence }}</dd></div><div><dt>分数说明</dt><dd>{{ item.guidance.score }}</dd></div></dl>
     </section>
     <h3>审核执行轨迹</h3>
     <div class="analysis-trace">
@@ -44,7 +44,7 @@
     <form action="{{ url_for('resolve_review', source=item.source, row_id=item.id) }}" method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>处理备注<textarea name="notes" rows="4" placeholder="说明通过、驳回或忽略的原因"></textarea></label>
-      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>风险等级与建议动作不一致</strong><small>若仍决定保留，请核对原文并勾选下方确认；系统不会接受未确认的一键放行。</small></span></div><label class="confirm-check"><input type="checkbox" name="conflict_confirmation" value="confirmed"><span>我已核对原文和证据，确认保留此内容</span></label>{% endif %}
+      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>系统拿不准</strong><small>风险分和处理建议不一致。若仍决定保留，请核对原文并勾选下方确认。</small></span></div><label class="confirm-check"><input type="checkbox" name="conflict_confirmation" value="confirmed"><span>我已核对原文和证据，确认保留此内容</span></label>{% endif %}
       <div class="button-grid">
         <button class="success-button" name="resolution" value="approved" type="submit">通过</button>
         <button class="danger-outline" name="resolution" value="rejected" type="submit">驳回</button>

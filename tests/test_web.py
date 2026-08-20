@@ -221,19 +221,29 @@ class WebTests(unittest.TestCase):
         self.assertIn("图片识别".encode("utf-8"), response.data)
         self.assertIn("AI 综合判断".encode("utf-8"), response.data)
         self.assertIn("等待审批".encode("utf-8"), response.data)
-        self.assertIn("内容审核".encode("utf-8"), response.data)
+        self.assertIn("全部内容".encode("utf-8"), response.data)
 
     def test_dashboard_exposes_task_queues_and_review_drawer(self):
         self.insert_tencent_review()
         response = self.login()
-        self.assertIn("建议放行".encode("utf-8"), response.data)
-        self.assertIn("建议调整栏目".encode("utf-8"), response.data)
-        self.assertIn("需人工核对".encode("utf-8"), response.data)
-        self.assertIn("建议删除".encode("utf-8"), response.data)
-        self.assertIn("AI 未完整分析".encode("utf-8"), response.data)
-        self.assertIn("明确处理建议".encode("utf-8"), response.data)
+        self.assertIn("没问题，可保留".encode("utf-8"), response.data)
+        self.assertIn("放错栏目".encode("utf-8"), response.data)
+        self.assertIn("需要你判断".encode("utf-8"), response.data)
+        self.assertIn("可能要删除".encode("utf-8"), response.data)
+        self.assertIn("机器没看完整".encode("utf-8"), response.data)
+        self.assertIn("下一步".encode("utf-8"), response.data)
         self.assertIn("问题类型".encode("utf-8"), response.data)
-        self.assertIn("查看证据和评分明细".encode("utf-8"), response.data)
+        self.assertIn("看证据和分数".encode("utf-8"), response.data)
+
+    def test_official_page_groups_tools_by_admin_tasks(self):
+        self.login()
+        response = self.client.get("/official")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("官方工具台".encode("utf-8"), response.data)
+        self.assertIn("查清楚".encode("utf-8"), response.data)
+        self.assertIn("处理风险".encode("utf-8"), response.data)
+        self.assertIn("当前关闭，只能预演".encode("utf-8"), response.data)
 
     def test_utc_scan_time_is_displayed_as_beijing_time(self):
         self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")
@@ -244,7 +254,7 @@ class WebTests(unittest.TestCase):
 
         response = self.client.get(f"/reviews/tencent/{row_id}")
 
-        self.assertIn("删除这条帖子".encode("utf-8"), response.data)
+        self.assertIn("进入删除确认".encode("utf-8"), response.data)
         self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
         self.assertIn("风险贡献 +80".encode("utf-8"), response.data)
@@ -643,7 +653,7 @@ class WebTests(unittest.TestCase):
             )
         self.login()
         response = self.client.get("/placements")
-        self.assertIn("栏目调整".encode("utf-8"), response.data)
+        self.assertIn("栏目移动".encode("utf-8"), response.data)
         self.assertIn("建议移入：WorkBuddy · 实用文章".encode("utf-8"), response.data)
         self.assertIn("图文案例文章".encode("utf-8"), response.data)
         self.assertIn(f'value="{row_id}"'.encode(), response.data)

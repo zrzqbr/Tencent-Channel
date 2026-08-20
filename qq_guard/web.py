@@ -49,9 +49,9 @@ from .tencent_monitor import TencentChannelMonitor
 SECTION_LABELS = {section.value: section.display_name for section in Section}
 RISK_LABELS = {"low": "低", "medium": "中", "high": "高", "critical": "严重"}
 ACTION_LABELS = {
-    "allow": "放行",
-    "review": "人工复核",
-    "delete_candidate": "删除候选",
+    "allow": "没问题，可保留",
+    "review": "拿不准，人工看",
+    "delete_candidate": "高风险，建议删",
 }
 STATUS_LABELS = {
     "pending": "待审核",
@@ -294,16 +294,16 @@ def create_app(
                 "",
             )
             if item["has_conflict"]:
-                item["ui_summary"] = "模型评分与处置建议矛盾，暂不删除"
+                item["ui_summary"] = "系统自己拿不准，先别直接处理"
             elif item["ui_queue"] == "incomplete":
-                item["ui_summary"] = item.get("ai_error") or "AI 未完整分析，请核对规则与原文"
+                item["ui_summary"] = item.get("ai_error") or "机器没有看完整，需要你核对原帖"
             elif item["ui_queue"] == "placement":
                 target_label = item["placement_suggestion"]["move_target"]["label"]
-                item["ui_summary"] = f"栏目不匹配，建议移至{target_label}"
+                item["ui_summary"] = f"内容适合放到{target_label}"
             elif item["ui_queue"] == "delete":
-                item["ui_summary"] = summary_text or first_reason or "检测到高风险信号，建议删除"
+                item["ui_summary"] = summary_text or first_reason or "有明确高风险信号，建议进入删除确认"
             else:
-                item["ui_summary"] = summary_text or first_reason or "未发现明确风险，建议放行"
+                item["ui_summary"] = summary_text or first_reason or "没发现明显问题，可以保留"
             item["guidance"] = _review_guidance(item)
 
         selected_queue = request.args.get("queue", "")
@@ -831,6 +831,7 @@ def create_app(
         return render_template(
             "official.html",
             groups=grouped_capabilities(capabilities),
+            workflows=_official_workflows(capabilities),
             capability_count=len(capabilities),
             cli_status=cli_status,
             skill_version=OFFICIAL_SKILL_VERSION,
@@ -1290,6 +1291,61 @@ def _configured_move_targets(config: GuardConfig) -> list:
     return targets
 
 
+def _official_workflows(capabilities) -> list:
+    by_action = {item.get("action"): item for item in capabilities}
+    definitions = [
+        (
+            "review",
+            "查清楚",
+            "查看帖子、评论、频道设置，先把事实核对完整。",
+            ("get-feed-detail", "get-channel-timeline-feeds", "get-feed-comments", "get-guild-channel-list"),
+        ),
+        (
+            "move",
+            "改内容",
+            "编辑、移动、置顶、设精华，适合处理栏目和内容呈现问题。",
+            ("move-feed", "alter-feed", "top-feed", "set-feed-essence", "push-essence-feed"),
+        ),
+        (
+            "publish",
+            "发内容",
+            "发布帖子、评论或回复，用官方参数直接提交并保留审计。",
+            ("publish-feed", "do-comment", "do-reply", "quick-publish"),
+        ),
+        (
+            "risk",
+            "处理风险",
+            "删除、禁言、移出成员等高影响动作，默认先预演。",
+            ("del-feed", "delete-and-mute", "modify-member-shut-up", "kick-guild-member"),
+        ),
+        (
+            "member",
+            "管成员",
+            "查询成员、管理员和角色权限，用于人工审核前后补充判断。",
+            ("get-user-info", "get-guild-member-list", "guild-member-search", "add-admin", "remove-admin"),
+        ),
+        (
+            "notice",
+            "看通知",
+            "检查官方通知和私信能力；网页治理仍以增量巡检为准。",
+            ("get-recent-notices", "check-new-notices", "push-group-dm-msg", "notices-status"),
+        ),
+    ]
+    workflows = []
+    for key, title, description, actions in definitions:
+        items = [by_action[action] for action in actions if action in by_action]
+        if items:
+            workflows.append(
+                {
+                    "key": key,
+                    "title": title,
+                    "description": description,
+                    "items": items[:4],
+                }
+            )
+    return workflows
+
+
 def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
     reasons = [reason for reason in item.get("reasons", []) if isinstance(reason, dict)]
     scored = [reason for reason in reasons if int(reason.get("score") or 0) > 0]
@@ -1308,10 +1364,10 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
 
     if item.get("has_conflict"):
         return {
-            "status": "AI 结论有矛盾",
-            "action": "暂不处理，重新分析",
-            "issue": "模型结论自相矛盾",
-            "why": f"模型给出 {int(item.get('risk_score') or 0)} 分，却建议{ACTION_LABELS.get(item.get('action'), item.get('action'))}；不能据此删除。",
+            "status": "系统拿不准",
+            "action": "先查看原帖，别直接删",
+            "issue": "结论不一致",
+            "why": f"风险分是 {int(item.get('risk_score') or 0)} 分，但处理建议又是“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”；平台已拦住一键处理。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
             "score": score_detail,
         }
@@ -1322,24 +1378,24 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         return {
             "status": "栏目放错了",
             "action": f"移动到“{target}”",
-            "issue": "栏目错投",
+            "issue": "栏目不合适",
             "why": suggestion.get("placement_reason") or message or "内容语义与当前栏目定位不一致",
             "evidence": evidence or str(classification_reasons[0] if classification_reasons else "AI 分类结果与当前栏目不同"),
             "score": "栏目调整与违规删除分开判断；错投本身不等于违禁内容",
         }
     if item.get("ui_queue") == "incomplete":
         return {
-            "status": "AI 分析未完成",
-            "action": "查看原帖/图片后重新巡检",
-            "issue": "AI 分析未完成",
-            "why": str(item.get("ai_error") or message or "当前只有规则初审结果，系统不会自动处置"),
+            "status": "机器没看完整",
+            "action": "查看原帖后决定",
+            "issue": "分析不完整",
+            "why": str(item.get("ai_error") or message or "当前只有规则初审结果，平台不会自动处理这条内容"),
             "evidence": evidence or "暂无完整的 Hy3 与 VITA 联合证据",
             "score": score_detail,
         }
     if item.get("action") == "delete_candidate":
         return {
-            "status": "内容可能违规",
-            "action": "删除这条帖子",
+            "status": "可能需要删除",
+            "action": "进入删除确认",
             "issue": issue_type,
             "why": message or "检测到高风险违规信号",
             "evidence": evidence or "请打开完整详情核对原文证据",
@@ -1347,8 +1403,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("action") == "review":
         return {
-            "status": "需要你确认",
-            "action": "查看原帖后再决定",
+            "status": "需要你判断",
+            "action": "看原帖后决定",
             "issue": issue_type,
             "why": message or "存在需要管理员确认的具体信号",
             "evidence": evidence or "请打开完整详情核对原文或图片",
@@ -1356,7 +1412,7 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     return {
         "status": "没有发现问题",
-        "action": "保留这条帖子",
+        "action": "保留",
         "issue": "未发现明确违规",
         "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与 AI 均未发现需要处置的问题"),
         "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
