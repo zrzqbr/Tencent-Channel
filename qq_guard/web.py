@@ -179,6 +179,7 @@ def create_app(
 
     @app.context_processor
     def template_context():
+        current_config = GuardConfig.from_file(str(resolved_config))
         return {
             "csrf_token": csrf_token,
             "section_labels": SECTION_LABELS,
@@ -188,6 +189,10 @@ def create_app(
             "ai_status_labels": AI_STATUS_LABELS,
             "ai_public_status_labels": AI_PUBLIC_STATUS_LABELS,
             "vision_status_labels": VISION_STATUS_LABELS,
+            "nav_guilds": [
+                {"id": item.guild_id, "name": item.name or item.guild_id}
+                for item in current_config.tencent_channels
+            ],
             "manual_delete_enabled": os.environ.get(
                 "QQ_GUARD_MANUAL_DELETE_ENABLED", "false"
             ).casefold()
@@ -234,17 +239,87 @@ def create_app(
     @login_required
     def dashboard():
         summary = store.dashboard()
-        reviews = store.reviews(status="pending", limit=8)
+        reviews = store.reviews(status="pending", limit=100)
         scans = store.scans(limit=5)
         current = GuardConfig.from_file(str(resolved_config))
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
+        suggestions, _ = placement_review(reviews, current)
+        suggestion_by_id = {item["id"]: item for item in suggestions}
+        queue_counts = {"allow": 0, "placement": 0, "delete": 0, "incomplete": 0}
+        for item in reviews:
+            item["placement_suggestion"] = suggestion_by_id.get(item["id"])
+            item["has_conflict"] = (
+                item.get("risk_level") in {"high", "critical"}
+                and item.get("action") == "allow"
+            ) or (
+                item.get("risk_level") == "low"
+                and item.get("action") == "delete_candidate"
+            )
+            if current.ai_review.enabled and (
+                item.get("analysis_source") != "ai"
+                or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
+            ):
+                item["ui_queue"] = "incomplete"
+            elif item.get("placement_suggestion"):
+                item["ui_queue"] = "placement"
+            elif item.get("action") == "delete_candidate":
+                item["ui_queue"] = "delete"
+            else:
+                item["ui_queue"] = "allow"
+            queue_counts[item["ui_queue"]] += 1
+
+            summary_text = str(item.get("ai_analysis", {}).get("summary") or "").strip()
+            first_reason = next(
+                (
+                    str(reason.get("message") or "").strip()
+                    for reason in item.get("reasons", [])
+                    if reason.get("message")
+                ),
+                "",
+            )
+            if item["has_conflict"]:
+                item["ui_summary"] = "风险与建议不一致，必须人工复核"
+            elif item["ui_queue"] == "incomplete":
+                item["ui_summary"] = item.get("ai_error") or "AI 未完整分析，请核对规则与原文"
+            elif item["ui_queue"] == "placement":
+                target_label = item["placement_suggestion"]["move_target"]["label"]
+                item["ui_summary"] = f"栏目不匹配，建议移至{target_label}"
+            elif item["ui_queue"] == "delete":
+                item["ui_summary"] = summary_text or first_reason or "检测到高风险信号，建议删除"
+            else:
+                item["ui_summary"] = summary_text or first_reason or "未发现明确风险，建议放行"
+
+        selected_queue = request.args.get("queue", "")
+        if selected_queue not in queue_counts:
+            selected_queue = next(
+                (key for key in ("allow", "placement", "delete", "incomplete") if queue_counts[key]),
+                "allow",
+            )
+        visible_reviews = [item for item in reviews if item["ui_queue"] == selected_queue]
+        selected_key = request.args.get("selected", "")
+        selected_item = next(
+            (
+                item
+                for item in visible_reviews
+                if f"{item['source']}-{item['id']}" == selected_key
+            ),
+            visible_reviews[0] if visible_reviews else None,
+        )
         return render_template(
             "dashboard.html",
             summary=summary,
-            reviews=reviews,
+            reviews=visible_reviews,
+            all_pending_reviews=reviews,
+            selected_item=selected_item,
+            selected_queue=selected_queue,
+            queue_counts=queue_counts,
+            pending_high_count=sum(
+                item.get("risk_level") in {"high", "critical"} for item in reviews
+            ),
             scans=scans,
             config=current,
             ai_status=ai_status,
+            move_targets=_configured_move_targets(current),
         )
 
     @app.get("/reviews")
@@ -330,6 +405,13 @@ def create_app(
             item = store.get_review(source, row_id)
         except ValueError:
             abort(404)
+        item["has_conflict"] = (
+            item.get("risk_level") in {"high", "critical"}
+            and item.get("action") == "allow"
+        ) or (
+            item.get("risk_level") == "low"
+            and item.get("action") == "delete_candidate"
+        )
         return render_template("review_detail.html", item=item)
 
     @app.post("/reviews/<source>/<int:row_id>/resolve")
@@ -338,6 +420,20 @@ def create_app(
         resolution = request.form.get("resolution", "")
         notes = request.form.get("notes", "").strip()[:1000]
         try:
+            item = store.get_review(source, row_id)
+            has_conflict = (
+                item.get("risk_level") in {"high", "critical"}
+                and item.get("action") == "allow"
+            ) or (
+                item.get("risk_level") == "low"
+                and item.get("action") == "delete_candidate"
+            )
+            if (
+                resolution == "approved"
+                and has_conflict
+                and request.form.get("conflict_confirmation") != "confirmed"
+            ):
+                raise ValueError("风险等级与建议动作不一致，请在详情页明确确认后再保留")
             store.resolve_review(source, row_id, resolution, "admin", notes, remote_ip())
         except ValueError as exc:
             flash(str(exc), "error")

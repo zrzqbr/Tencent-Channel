@@ -1,6 +1,8 @@
 {% extends "base.html" %}
-{% block title %}规则与敏感词 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}规则与敏感词{% endblock %}
+{% block title %}设置 · 腾讯频道治理{% endblock %}
+{% block heading %}设置{% endblock %}
+{% block page_intro %}<p class="page-subtitle">配置 AI、分类规则、敏感词和频道栏目</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('channels') }}"><i class="ri-community-line" aria-hidden="true"></i>频道与栏目</a><a class="secondary-button" href="{{ url_for('test_content') }}"><i class="ri-flask-line" aria-hidden="true"></i>模拟检测</a>{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-title"><div><h2>腾讯云 AI 双模型审核</h2><p>Youtu-VITA 先理解图片，混元 Hy3 再结合全文、相邻内容和版块规则给出结论</p></div><span class="mode-badge"><i></i>{{ {'ready':'已连接','missing_key':'等待 API 密钥','disabled':'未启用'}.get(ai_status.status, ai_status.status) }}</span></div>

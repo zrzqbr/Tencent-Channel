@@ -13,3 +13,4 @@ botpy.log*
 htmlcov/
 build/
 dist/
+qa/

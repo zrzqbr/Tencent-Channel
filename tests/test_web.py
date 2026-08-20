@@ -126,7 +126,7 @@ class WebTests(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("治理总览".encode("utf-8"), response.data)
+        self.assertIn("今日待办".encode("utf-8"), response.data)
         return response
 
     def insert_tencent_review(
@@ -173,11 +173,53 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
-        self.assertIn("完整审核流程".encode("utf-8"), response.data)
-        self.assertIn("Youtu-VITA 图片分析".encode("utf-8"), response.data)
-        self.assertIn("Hy3 综合判断".encode("utf-8"), response.data)
-        self.assertIn("管理员人工审批".encode("utf-8"), response.data)
-        self.assertIn("审核结果与审批".encode("utf-8"), response.data)
+        self.assertIn("抓取内容".encode("utf-8"), response.data)
+        self.assertIn("图片识别".encode("utf-8"), response.data)
+        self.assertIn("AI 综合判断".encode("utf-8"), response.data)
+        self.assertIn("等待审批".encode("utf-8"), response.data)
+        self.assertIn("内容审核".encode("utf-8"), response.data)
+
+    def test_dashboard_exposes_task_queues_and_review_drawer(self):
+        self.insert_tencent_review()
+        response = self.login()
+        self.assertIn("建议放行".encode("utf-8"), response.data)
+        self.assertIn("建议调整栏目".encode("utf-8"), response.data)
+        self.assertIn("建议删除".encode("utf-8"), response.data)
+        self.assertIn("AI 未完整分析".encode("utf-8"), response.data)
+        self.assertIn("判断依据".encode("utf-8"), response.data)
+
+    def test_conflicting_high_risk_allow_requires_explicit_confirmation(self):
+        row_id = self.insert_tencent_review(title="风险与建议冲突")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET action = 'allow' WHERE id = ?",
+                (row_id,),
+            )
+        response = self.login()
+        token = self.csrf(response)
+        response = self.client.post(
+            f"/reviews/tencent/{row_id}/resolve",
+            data={"csrf_token": token, "resolution": "approved", "notes": "人工确认"},
+            follow_redirects=True,
+        )
+        self.assertIn("风险等级与建议动作不一致".encode("utf-8"), response.data)
+        with sqlite3.connect(str(self.database_path)) as connection:
+            status = connection.execute(
+                "SELECT review_status FROM tencent_moderation_findings WHERE id = ?", (row_id,)
+            ).fetchone()[0]
+        self.assertEqual(status, "pending")
+
+        response = self.client.post(
+            f"/reviews/tencent/{row_id}/resolve",
+            data={
+                "csrf_token": self.csrf(response),
+                "resolution": "approved",
+                "notes": "已核对原文和证据",
+                "conflict_confirmation": "confirmed",
+            },
+            follow_redirects=True,
+        )
+        self.assertIn("审核结论已保存".encode("utf-8"), response.data)
 
     def test_post_requires_csrf(self):
         self.login()
@@ -289,7 +331,7 @@ class WebTests(unittest.TestCase):
         self.login()
         response = self.client.get("/ai-analysis")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("AI 分析记录".encode("utf-8"), response.data)
+        self.assertIn("AI 判断依据".encode("utf-8"), response.data)
         self.assertIn("规则判定".encode("utf-8"), response.data)
         self.assertIn("本条没有执行大模型分析".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
@@ -507,7 +549,7 @@ class WebTests(unittest.TestCase):
             )
         self.login()
         response = self.client.get("/placements")
-        self.assertIn("栏目调整建议".encode("utf-8"), response.data)
+        self.assertIn("栏目调整".encode("utf-8"), response.data)
         self.assertIn("建议移入：WorkBuddy · 实用文章".encode("utf-8"), response.data)
         self.assertIn("图文案例文章".encode("utf-8"), response.data)
         self.assertIn(f'value="{row_id}"'.encode(), response.data)

@@ -1,115 +1,71 @@
 {% extends "base.html" %}
-{% block title %}总览 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}治理总览{% endblock %}
+{% block title %}今日待办 · 腾讯频道治理{% endblock %}
+{% block heading %}今日待办{% endblock %}
+{% block topbar_extra %}
+<div class="topbar-scan-meta"><span>最近巡检</span><strong>{{ ((summary.latest_scan or {}).get('finished_at') or '尚未巡检')|replace('T', ' ')|truncate(16, True, '') }}</strong></div>
+<form action="{{ url_for('scan_now') }}" method="post" data-scan-form data-existing-job="{{ request.args.get('scan_job', '') }}">
+  <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+  <button class="primary-button scan-button" type="submit" data-scan-button><i class="ri-radar-line" aria-hidden="true"></i>立即巡检</button>
+</form>
+{% endblock %}
+{% block page_intro %}<p class="page-subtitle">先处理高风险内容，再确认栏目调整</p>{% endblock %}
 {% block content %}
-<div class="hero-grid">
-  <section class="hero-card">
-    <span class="mode-badge"><i></i>{{ 'AI 审核已就绪' if ai_status.status == 'ready' else '系统运行中' }}</span>
-    <h2>AI 先分析，管理员做终审</h2>
-    <p>规则只提供线索；大模型结合全文语义、版块定位和媒体信息给出分类、风险、证据与建议动作。</p>
-  </section>
-  <section class="action-card" id="scan">
-    <strong>立即同步频道内容</strong>
-    <p>从两个频道读取最新内容并生成审核结果。只有同作者、同栏目、连续且完全相同的帖子可自动去重。</p>
-    <form action="{{ url_for('scan_now') }}" method="post" data-scan-form data-existing-job="{{ request.args.get('scan_job', '') }}">
-      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <button class="primary-button" type="submit" data-scan-button>立即巡检</button>
-    </form>
-    <div class="scan-progress" data-scan-progress hidden aria-live="polite">
-      <div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div>
-      <div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div>
-      <p data-scan-message>正在建立安全连接</p>
-      <a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮 AI 分析与审核记录</a>
+<section class="scan-strip" aria-label="巡检流程">
+  <div class="scan-stage completed"><i class="ri-download-cloud-2-line" aria-hidden="true"></i><span><strong>抓取内容</strong><small>读取频道新内容</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage completed"><i class="ri-file-copy-2-line" aria-hidden="true"></i><span><strong>去重检查</strong><small>严格连续重复</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage completed"><i class="ri-shield-check-line" aria-hidden="true"></i><span><strong>规则初审</strong><small>栏目与风险规则</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage completed"><i class="ri-image-2-line" aria-hidden="true"></i><span><strong>图片识别</strong><small>Youtu-VITA</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage {{ 'completed' if ai_status.status == 'ready' else 'attention' }}"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>AI 综合判断</strong><small>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage current"><i class="ri-user-follow-line" aria-hidden="true"></i><span><strong>等待审批</strong><small>{{ summary.pending }} 条待处理</small></span></div>
+</section>
+<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在建立安全连接</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮 AI 分析记录</a></div>
+
+<section class="task-metrics" aria-label="今日任务统计">
+  <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>待处理</span><strong>{{ summary.pending }}</strong><small>等待管理员确认</small></a>
+  <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>高风险</span><strong>{{ pending_high_count }}</strong><small>优先核对</small></a>
+  <a class="task-metric warning" href="{{ url_for('dashboard', queue='placement') }}"><span>栏目待调整</span><strong>{{ queue_counts.placement }}</strong><small>确认后移动原帖</small></a>
+  <a class="task-metric info" href="{{ url_for('dashboard', queue='incomplete') }}"><span>AI 未完整分析</span><strong>{{ queue_counts.incomplete }}</strong><small>不会自动处置</small></a>
+</section>
+
+<div class="review-workspace">
+  <section class="review-queue" aria-label="审核任务队列">
+    <div class="queue-tabs" role="tablist" aria-label="审核建议分类">
+      <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">建议放行 <b>{{ queue_counts.allow }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">建议调整栏目 <b>{{ queue_counts.placement }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">建议删除 <b>{{ queue_counts.delete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">AI 未完整分析 <b>{{ queue_counts.incomplete }}</b></a>
     </div>
-  </section>
-</div>
-
-<section class="panel flow-panel" id="workflow">
-  <div class="panel-title">
-    <div><h2>完整审核流程</h2><p>从频道内容进入到管理员处置，每一步都显示当前状态和去向</p></div>
-    <a href="{{ url_for('reviews') }}">进入审核结果</a>
-  </div>
-  <div class="flow-grid" role="list" aria-label="内容审核流程">
-    <a class="flow-step" role="listitem" href="#scan">
-      <span class="flow-number">01</span><strong>内容接入</strong>
-      <p>读取标题、正文、话题、图片、作者、栏目与附近上下文。</p>
-      <small>{{ (summary.latest_scan or {}).get('scanned_feeds', 0) }} 条 / 最近一轮</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('duplicates') }}">
-      <span class="flow-number">02</span><strong>确定性去重</strong>
-      <p>只识别同作者、同栏目、连续且完全相同的内容。</p>
-      <small>{{ summary.duplicates }} 条严格重复</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
-      <span class="flow-number">03</span><strong>规则初审</strong>
-      <p>检查栏目要求、敏感词、链接、联系方式和异常推广。</p>
-      <small>策略 {{ config.moderation.policy_version }}</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
-      <span class="flow-number">04</span><strong>Youtu-VITA 图片分析</strong>
-      <p>有图片时识别画面、图片文字、二维码与视觉风险。</p>
-      <small>{{ vision_status_labels.get(ai_status.vision_status, ai_status.vision_status) }}</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('rules') }}">
-      <span class="flow-number">05</span><strong>Hy3 综合判断</strong>
-      <p>结合正文、图片结论、附近上下文和栏目规则综合判断。</p>
-      <small>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('ai_analysis') }}">
-      <span class="flow-number">06</span><strong>生成审核结论</strong>
-      <p>输出内容分类、风险等级、建议动作与可核对理由。</p>
-      <small>{{ summary.total }} 条已进入治理</small>
-    </a>
-    <a class="flow-step emphasis" role="listitem" href="{{ url_for('reviews', status='pending') }}">
-      <span class="flow-number">07</span><strong>管理员人工审批</strong>
-      <p>选择通过、驳回、忽略、调整后处置或进入删除确认。</p>
-      <small>{{ summary.pending }} 条待处理</small>
-    </a>
-    <a class="flow-step" role="listitem" href="{{ url_for('audit') }}">
-      <span class="flow-number">08</span><strong>处置与审计</strong>
-      <p>记录审批结论、删除理由、平台结果和完整操作轨迹。</p>
-      <small>{{ summary.deleted }} 条已删除 · {{ summary.failed }} 条失败</small>
-    </a>
-  </div>
-</section>
-
-<section class="info-banner">
-  <strong>AI 状态：{{ {'ready':'已连接','missing_key':'等待配置 API 密钥','disabled':'未启用'}.get(ai_status.status, ai_status.status) }}{% if ai_status.model %} · {{ ai_status.model }} + {{ ai_status.vision_model }}{% endif %}</strong>
-  <p>本轮 AI 完成 {{ (summary.latest_scan or {}).get('ai_reviewed', 0) }} 条，安全降级 {{ (summary.latest_scan or {}).get('ai_fallbacks', 0) }} 条。图片由 VITA 提取证据，Hy3 结合上下文给出建议；降级时不会自动删除普通内容。</p>
-</section>
-
-<div class="metric-grid">
-  <article class="metric"><span>已检测内容</span><strong>{{ summary.total }}</strong><small>累计进入治理流程</small></article>
-  <article class="metric warning"><span>待人工审核</span><strong>{{ summary.pending }}</strong><small>需要管理员判断</small></article>
-  <article class="metric purple"><span>严格重复</span><strong>{{ summary.duplicates }}</strong><small>同作者同栏目连续一致</small></article>
-  <article class="metric success"><span>已删除</span><strong>{{ summary.deleted }}</strong><small>经过授权的成功操作</small></article>
-  <article class="metric danger"><span>删除失败</span><strong>{{ summary.failed }}</strong><small>保留错误原因</small></article>
-</div>
-
-<div class="two-column">
-  <section class="panel">
-    <div class="panel-title"><div><h2>栏目分布</h2><p>当前分类结果</p></div></div>
-    <div class="tag-cloud">
-      {% for key, count in summary.by_section.items() %}<span>{{ section_labels.get(key, key) }} <b>{{ count }}</b></span>{% else %}<p class="empty">暂无数据</p>{% endfor %}
+    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>AI 一句话结论</span><span>风险级别</span><span>建议目标</span><span>操作</span></div>
+    <div class="queue-list">
+      {% for item in reviews %}{% set item_key = item.source ~ '-' ~ item.id %}
+      <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}">
+        <div class="queue-content"><span class="risk-dot risk-{{ item.risk_level }}"></span><span><strong>{{ item.title or item.body|truncate(34) or '无标题内容' }}</strong><small>{{ item.body|striptags|truncate(46) or '暂无正文摘要' }}</small></span></div>
+        <div><strong>{{ item.author_id|truncate(18, True, '') or '未知作者' }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }}</small></div>
+        <div><strong class="queue-summary">{{ item.ui_summary|truncate(45) }}</strong>{% if item.has_conflict %}<small class="consistency-inline"><i class="ri-error-warning-line" aria-hidden="true"></i>结论冲突</small>{% else %}<small>{{ 'Hy3 + VITA' if item.analysis_source == 'ai' else '规则初审' }}</small>{% endif %}</div>
+        <div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 {{ item.risk_score }}</span></div>
+        <div><strong>{{ item.placement_suggestion.move_target.label if item.placement_suggestion else section_labels.get(item.section, item.section) }}</strong><small>{{ action_labels.get(item.action, item.action) }}</small></div>
+        <div><a class="row-review-button" href="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}#review-detail">审核</a></div>
+      </article>
+      {% else %}<div class="queue-empty"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><strong>这一类任务已经处理完了</strong><p>可以切换上方标签继续处理其他内容。</p></div>{% endfor %}
     </div>
+    <div class="queue-footer"><span>当前显示 {{ reviews|length }} 条</span><a href="{{ url_for('reviews', status='pending') }}">进入全部内容审核</a></div>
   </section>
-  <section class="panel">
-    <div class="panel-title"><div><h2>风险分布</h2><p>按审核风险等级汇总</p></div></div>
-    <div class="tag-cloud risk-tags">
-      {% for key, count in summary.by_risk.items() %}<span class="risk-{{ key }}">{{ risk_labels.get(key, key) }}风险 <b>{{ count }}</b></span>{% else %}<p class="empty">暂无数据</p>{% endfor %}
-    </div>
-  </section>
+
+  <aside class="review-drawer" id="review-detail">
+    {% if selected_item %}
+    <div class="drawer-title"><div><span>内容详情</span><h2>{{ selected_item.title or '无标题内容' }}</h2></div><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">完整详情</a></div>
+    <section class="original-preview"><span class="preview-label">原帖预览</span><p>{{ selected_item.body|striptags|truncate(210) or '本条记录暂未保存正文，可在完整详情中查看内容编号与检测证据。' }}</p><dl><div><dt>作者</dt><dd>{{ selected_item.author_id or '未返回' }}</dd></div><div><dt>来源栏目</dt><dd>{{ section_labels.get(selected_item.section, selected_item.section) }}</dd></div><div><dt>频道</dt><dd>{{ selected_item.guild_name or selected_item.guild_id }}</dd></div></dl></section>
+    <section class="ai-decision"><div><span>AI 判断</span><strong>{{ selected_item.ui_summary }}</strong></div><div><span>风险等级</span><strong class="risk-text-{{ selected_item.risk_level }}">{{ risk_labels.get(selected_item.risk_level, selected_item.risk_level) }}风险 {{ selected_item.risk_score }}</strong></div></section>
+    <section class="evidence-block"><div class="section-heading"><strong>判断依据</strong><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">查看完整分析</a></div><ol>{% for reason in selected_item.reasons[:3] %}<li>{{ reason.message }}{% if reason.evidence %}：{{ reason.evidence|truncate(70) }}{% endif %}</li>{% else %}<li>{{ selected_item.ai_analysis.get('summary') or '未发现明确规则风险，仍需管理员结合原文确认。' }}</li>{% endfor %}</ol></section>
+    {% if selected_item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>结论与风险不一致，请人工复核</strong><small>系统已锁定自动放行，必须由管理员确认。</small></span></div>{% endif %}
+    {% if selected_item.analysis_source != 'ai' and ai_status.status == 'ready' %}<div class="consistency-warning"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>本条 AI 分析未完整执行</strong><small>{{ selected_item.ai_error or '当前记录只有规则结论，不会自动执行普通内容处置。' }}</small></span></div>{% endif %}
+    <section class="drawer-actions"><h3>处理动作</h3>
+      <form action="{{ url_for('resolve_review', source=selected_item.source, row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="resolution" value="approved"><input type="hidden" name="notes" value="在今日待办确认保留"><button class="secondary-button full" type="submit" {{ 'disabled' if selected_item.has_conflict }}>保留</button></form>
+      {% if selected_item.source == 'tencent' %}<form action="{{ url_for('prepare_bulk_move') }}" method="post" class="drawer-move-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ selected_item.id }}"><select name="move_target" aria-label="选择目标栏目" required><option value="">调整栏目…</option>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if selected_item.placement_suggestion and target.key == selected_item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select><button class="primary-button full" type="submit">确认栏目</button></form>
+      <form action="{{ url_for('prepare_delete', row_id=selected_item.id) }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or selected_item.delete_status == 'deleted' }}>{{ '已删除' if selected_item.delete_status == 'deleted' else '删除（需二次确认）' }}</button></form>{% endif %}
+      <p>移动或删除都需要填写理由、重新输入密码并二次确认。</p>
+    </section>
+    {% else %}<div class="drawer-empty"><i class="ri-file-search-line" aria-hidden="true"></i><strong>当前没有待审核内容</strong><p>切换任务标签，或点击“立即巡检”获取最新内容。</p></div>{% endif %}
+  </aside>
 </div>
-
-<section class="panel">
-  <div class="panel-title"><div><h2>待我审批</h2><p>按风险分和时间排序；AI 结论只作为管理员决策依据</p></div><a href="{{ url_for('reviews') }}">查看全部</a></div>
-  {% include "partials/review_table.html" %}
-</section>
-
-<section class="panel">
-  <div class="panel-title"><div><h2>最近巡检</h2><p>频道扫描运行记录</p></div></div>
-  <div class="table-wrap"><table><thead><tr><th>完成时间</th><th>频道</th><th>检测</th><th>重复</th><th>缺少话题</th><th>模式</th></tr></thead><tbody>
-    {% for scan in scans %}<tr><td>{{ scan.finished_at|replace('T', ' ')|truncate(19, True, '') }}</td><td>{{ scan.guilds|join('、') }}</td><td>{{ scan.scanned_feeds }}</td><td>{{ scan.duplicates }}</td><td>{{ scan.weekly_missing_topic }}</td><td><span class="pill">{{ scan.delete_mode }}</span></td></tr>{% else %}<tr><td colspan="6" class="empty">尚未执行巡检</td></tr>{% endfor %}
-  </tbody></table></div>
-</section>
 {% endblock %}

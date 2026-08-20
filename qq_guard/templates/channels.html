@@ -1,6 +1,8 @@
 {% extends "base.html" %}
-{% block title %}频道与版块 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}频道与版块{% endblock %}
+{% block title %}频道与栏目设置 · 腾讯频道治理{% endblock %}
+{% block heading %}频道与栏目设置{% endblock %}
+{% block page_intro %}<p class="page-subtitle">管理接入频道及各栏目的发布要求</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('rules') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回设置</a>{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-title"><div><h2>已接入频道</h2><p>每个频道的数据和去重范围完全隔离</p></div></div>

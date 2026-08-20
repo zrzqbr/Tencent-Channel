@@ -1,10 +1,12 @@
 {% extends "base.html" %}
-{% block title %}审核结果与审批 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}审核结果与审批{% endblock %}
+{% block title %}内容审核 · 腾讯频道治理{% endblock %}
+{% block heading %}内容审核{% endblock %}
+{% block page_intro %}<p class="page-subtitle">筛选任务，批量选择，再确认保留、调栏或删除</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('ai_analysis') }}"><i class="ri-brain-line" aria-hidden="true"></i>查看 AI 判断依据</a>{% endblock %}
 {% block content %}
 <section class="info-banner review-guide">
-  <strong>在这里完成最终判断</strong>
-  <p>每条内容都会标出规则、Youtu-VITA 与 Hy3 的实际执行状态；只有管理员审批后，普通内容才可进入删除确认。</p>
+  <strong>先筛选，再批量处理</strong>
+  <p>点击内容标题查看规则、Youtu-VITA 与 Hy3 的完整证据；普通内容只有经过管理员确认，才能进入移动或删除的二次确认页。</p>
 </section>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">

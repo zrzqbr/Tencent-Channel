@@ -1,6 +1,8 @@
 {% extends "base.html" %}
-{% block title %}栏目调整建议 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}栏目调整建议{% endblock %}
+{% block title %}栏目调整 · 腾讯频道治理{% endblock %}
+{% block heading %}栏目调整{% endblock %}
+{% block page_intro %}<p class="page-subtitle">核对错投内容，确认后移动原帖</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容审核</a>{% endblock %}
 {% block content %}
 <section class="info-banner">
   <strong>AI 与规则只提出建议，管理员确认后才会移动原帖</strong>

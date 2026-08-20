@@ -4,86 +4,34 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
-  <title>{% block title %}腾讯频道内容治理后台{% endblock %}</title>
+  <title>{% block title %}腾讯频道治理{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', filename='remixicon.css') }}">
   <link rel="stylesheet" href="{{ url_for('static', filename='admin.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='workflow.css') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='placement.css') }}">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
-      <a class="brand" href="{{ url_for('dashboard') }}">
-        <span class="brand-mark">T</span>
-        <span><strong>腾讯频道治理</strong><small>Content Guard</small></span>
-      </a>
+      <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i class="ri-shield-check-line" aria-hidden="true"></i></span><span><strong>腾讯频道治理</strong><small>Content Guard</small></span></a>
       <nav aria-label="主要导航">
-        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}">
-          <span>工作台</span><small>流程状态与今日待办</small>
-        </a>
-        <div class="nav-group">
-          <p>审核工作流</p>
-          <a class="nav-link {{ 'active' if request.endpoint in ['reviews', 'review_detail', 'confirm_delete', 'confirm_bulk_delete', 'confirm_bulk_move'] }}" href="{{ url_for('reviews') }}">
-            <span>审核结果与审批</span><small>规则、VITA、Hy3 与终审</small>
-          </a>
-          <a class="nav-link {{ 'active' if request.endpoint == 'placements' }}" href="{{ url_for('placements') }}">
-            <span>栏目调整建议</span><small>识别错投并审批移动</small>
-          </a>
-          <a class="nav-link {{ 'active' if request.endpoint == 'ai_analysis' }}" href="{{ url_for('ai_analysis') }}">
-            <span>AI 分析记录</span><small>每条结论、证据与降级原因</small>
-          </a>
-          <a class="nav-link {{ 'active' if request.endpoint == 'duplicates' }}" href="{{ url_for('duplicates') }}">
-            <span>严格去重</span><small>连续完全相同内容</small>
-          </a>
-        </div>
-        <div class="nav-group">
-          <p>治理配置</p>
-          <a class="nav-link {{ 'active' if request.endpoint == 'channels' }}" href="{{ url_for('channels') }}">
-            <span>频道与栏目</span><small>栏目定位与发布要求</small>
-          </a>
-          <a class="nav-link {{ 'active' if request.endpoint == 'rules' }}" href="{{ url_for('rules') }}">
-            <span>AI 与规则策略</span><small>模型、阈值和敏感词</small>
-          </a>
-          <a class="nav-link {{ 'active' if request.endpoint == 'test_content' }}" href="{{ url_for('test_content') }}">
-            <span>模拟检测</span><small>上线前验证判定</small>
-          </a>
-        </div>
-        <div class="nav-group">
-          <p>记录</p>
-          <a class="nav-link {{ 'active' if request.endpoint == 'audit' }}" href="{{ url_for('audit') }}">
-            <span>处置与审计</span><small>审批、删除与运行记录</small>
-          </a>
-        </div>
+        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><i class="ri-calendar-check-line" aria-hidden="true"></i><span>今日待办</span>{% if request.endpoint == 'dashboard' and summary is defined %}<b>{{ summary.pending }}</b>{% endif %}</a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['reviews','review_detail','ai_analysis','confirm_delete','confirm_bulk_delete','confirm_bulk_move'] }}" href="{{ url_for('reviews') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span>内容审核</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint == 'placements' }}" href="{{ url_for('placements') }}"><i class="ri-layout-grid-line" aria-hidden="true"></i><span>栏目调整</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['audit','duplicates'] }}" href="{{ url_for('audit') }}"><i class="ri-history-line" aria-hidden="true"></i><span>处理记录</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['rules','channels','test_content'] }}" href="{{ url_for('rules') }}"><i class="ri-settings-3-line" aria-hidden="true"></i><span>设置</span></a>
       </nav>
-      <div class="safety-card">
-        <span class="status-dot"></span>
-        <strong>人工终审模式</strong>
-        <p>仅严格连续重复可自动去重；其他删除需要管理员二次确认。</p>
-      </div>
-      <form action="{{ url_for('logout') }}" method="post">
-        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="ghost-button full" type="submit">退出登录</button>
-      </form>
+      <div class="sidebar-help"><i class="ri-shield-user-line" aria-hidden="true"></i><span><strong>人工终审模式</strong><small>普通内容不会被 AI 自动删除</small></span></div>
+      <div class="channel-switcher"><span>当前频道</span>{% if nav_guilds %}<details><summary><i class="ri-community-line" aria-hidden="true"></i><strong>{{ nav_guilds[0].name }}</strong><i class="ri-arrow-down-s-line" aria-hidden="true"></i></summary><div>{% for guild in nav_guilds %}<a href="{{ url_for('reviews', guild=guild.id) }}">{{ guild.name }}</a>{% endfor %}</div></details>{% else %}<strong>尚未配置频道</strong>{% endif %}</div>
+      <form class="logout-form" action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit"><i class="ri-logout-box-r-line" aria-hidden="true"></i>退出登录</button></form>
     </aside>
     <button class="sidebar-backdrop" type="button" data-sidebar-toggle aria-label="关闭菜单"></button>
     <main class="main-panel">
       <header class="topbar">
-        <button class="menu-button" type="button" data-sidebar-toggle aria-label="打开菜单">菜单</button>
-        <div>
-          <p class="eyebrow">tencent.ruitcarch.cloud</p>
-          <h1>{% block heading %}内容治理后台{% endblock %}</h1>
-        </div>
-        <span class="admin-chip">管理员</span>
+        <button class="menu-button" type="button" data-sidebar-toggle aria-label="打开菜单"><i class="ri-menu-line" aria-hidden="true"></i></button>
+        <div class="topbar-title"><h1>{% block heading %}内容治理{% endblock %}</h1>{% block page_intro %}{% endblock %}</div>
+        <div class="topbar-actions">{% block topbar_extra %}<span class="admin-chip"><i class="ri-user-3-line" aria-hidden="true"></i>管理员</span>{% endblock %}</div>
       </header>
       <section class="page-content">
-        {% with messages = get_flashed_messages(with_categories=true) %}
-          {% if messages %}
-            <div class="flash-stack">
-              {% for category, message in messages %}
-                <div class="flash {{ category }}">{{ message }}</div>
-              {% endfor %}
-            </div>
-          {% endif %}
-        {% endwith %}
+        {% with messages = get_flashed_messages(with_categories=true) %}{% if messages %}<div class="flash-stack">{% for category, message in messages %}<div class="flash {{ category }}"><i class="{{ 'ri-checkbox-circle-line' if category == 'success' else 'ri-error-warning-line' }}" aria-hidden="true"></i>{{ message }}</div>{% endfor %}</div>{% endif %}{% endwith %}
         {% block content %}{% endblock %}
       </section>
     </main>
