@@ -283,6 +283,7 @@ class TencentCliClient:
         require_success: bool = True,
     ) -> Any:
         rate_limit_retried = False
+        timeout_retried = False
         for attempt in range(max(0, int(retries)) + 1):
             self._throttle()
             try:
@@ -300,8 +301,9 @@ class TencentCliClient:
                     env=self.environment,
                 )
             except subprocess.TimeoutExpired as exc:
-                if attempt < retries:
-                    time.sleep(min(8.0, 1.0 * (2**attempt)))
+                if attempt < retries and not timeout_retried:
+                    timeout_retried = True
+                    time.sleep(1.0)
                     continue
                 raise TencentCliError("腾讯频道 CLI 请求超时") from exc
             raw = (completed.stdout or "").strip()
