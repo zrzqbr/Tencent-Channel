@@ -13,7 +13,7 @@
     <dl class="meta-grid">
       <div><dt>频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>版块 ID</dt><dd>{{ item.channel_id }}</dd></div>
       <div><dt>作者 ID</dt><dd>{{ item.author_id or '未返回' }}</dd></div><div><dt>内容 ID</dt><dd class="break-all">{{ item.item_id }}</dd></div>
-      <div><dt>策略版本</dt><dd>{{ item.policy_version }}</dd></div><div><dt>检测时间</dt><dd>{{ item.created_at|replace('T', ' ') }}</dd></div>
+      <div><dt>策略版本</dt><dd>{{ item.policy_version }}</dd></div><div><dt>检测时间（北京时间）</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
       <div><dt>分析来源</dt><dd>{{ 'AI 语义审核' if item.analysis_source == 'ai' else '规则降级' }}</dd></div><div><dt>模型 / 置信度</dt><dd>{{ item.ai_model or '未调用' }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</dd></div>
     </dl>
     <section class="detail-recommendation">

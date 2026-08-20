@@ -4,7 +4,7 @@
     {% for item in reviews if reviews is defined %}
     <tr>
       {% if show_bulk_actions %}<td class="selection-column">{% if item.source == 'tencent' and item.delete_status != 'deleted' %}<input type="checkbox" name="review_ids" value="{{ item.id }}" data-review-checkbox aria-label="选择 {{ item.title or item.item_id }}" {{ 'disabled' if not manual_delete_enabled }}>{% else %}<span class="unavailable-mark">—</span>{% endif %}</td>{% endif %}
-      <td><a class="title-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.created_at|replace('T', ' ')|truncate(19, True, '') }}</small></td>
+      <td><a class="title-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</small></td>
       <td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ item.channel_id }}</small></td>
       <td><span class="pill">{{ section_labels.get(item.section, item.section) }}</span>{% if item.placement_suggestion %}<small class="analysis-summary placement-hint">建议移动到：{{ item.placement_suggestion.move_target.label }}</small>{% endif %}</td>
       <td><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</span></td>

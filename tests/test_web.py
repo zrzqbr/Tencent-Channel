@@ -12,7 +12,7 @@ from werkzeug.security import generate_password_hash
 
 from qq_guard.admin_store import AdminStore
 from qq_guard.scan_control import ScanLock
-from qq_guard.web import create_app
+from qq_guard.web import _cn_time, create_app
 
 
 TEST_PASSWORD = "test-only-password-9!"
@@ -189,7 +189,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("AI 未完整分析".encode("utf-8"), response.data)
         self.assertIn("明确处理建议".encode("utf-8"), response.data)
         self.assertIn("问题类型".encode("utf-8"), response.data)
-        self.assertIn("分数怎么来的".encode("utf-8"), response.data)
+        self.assertIn("查看证据和评分明细".encode("utf-8"), response.data)
+
+    def test_utc_scan_time_is_displayed_as_beijing_time(self):
+        self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")
 
     def test_review_detail_explains_sensitive_term_and_score(self):
         row_id = self.insert_tencent_review()
@@ -197,7 +200,7 @@ class WebTests(unittest.TestCase):
 
         response = self.client.get(f"/reviews/tencent/{row_id}")
 
-        self.assertIn("建议删除（仍需管理员二次确认）".encode("utf-8"), response.data)
+        self.assertIn("删除这条帖子".encode("utf-8"), response.data)
         self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
         self.assertIn("风险贡献 +80".encode("utf-8"), response.data)

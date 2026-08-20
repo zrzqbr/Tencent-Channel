@@ -31,7 +31,7 @@
   {% for item in items %}
   <article class="panel analysis-record">
     <div class="analysis-record-head">
-      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'Hy3 已分析' if item.analysis_source == 'ai' else '规则判定' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|replace('T', ' ')|truncate(19, True, '') }}</p></div>
+      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'Hy3 已分析' if item.analysis_source == 'ai' else '规则判定' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</p></div>
       <span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 · {{ item.risk_score }}</span>
     </div>
     <div class="analysis-record-grid">

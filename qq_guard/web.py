@@ -4,9 +4,11 @@ import secrets
 import threading
 import time
 from collections import defaultdict, deque
+from datetime import datetime, timezone
 from functools import wraps
 from pathlib import Path
 from typing import Any, Callable, Dict, Optional
+from zoneinfo import ZoneInfo
 
 from flask import (
     Flask,
@@ -111,6 +113,7 @@ def create_app(
     ).expanduser().resolve()
     guard_config = GuardConfig.from_file(str(resolved_config))
     app = Flask(__name__)
+    app.jinja_env.filters["cn_time"] = _cn_time
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config.update(
         SECRET_KEY=os.environ.get("QQ_GUARD_SECRET_KEY", ""),
@@ -1165,7 +1168,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
 
     if item.get("has_conflict"):
         return {
-            "action": "暂不处置，建议重新分析",
+            "status": "AI 结论有矛盾",
+            "action": "暂不处理，重新分析",
             "issue": "模型结论自相矛盾",
             "why": f"模型给出 {int(item.get('risk_score') or 0)} 分，却建议{ACTION_LABELS.get(item.get('action'), item.get('action'))}；不能据此删除。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
@@ -1176,7 +1180,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         target = suggestion["move_target"]["label"]
         classification_reasons = list((item.get("classification") or {}).get("reasons") or [])
         return {
-            "action": f"建议调整栏目到“{target}”",
+            "status": "栏目放错了",
+            "action": f"移动到“{target}”",
             "issue": "栏目错投",
             "why": suggestion.get("placement_reason") or message or "内容语义与当前栏目定位不一致",
             "evidence": evidence or str(classification_reasons[0] if classification_reasons else "AI 分类结果与当前栏目不同"),
@@ -1184,7 +1189,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("ui_queue") == "incomplete":
         return {
-            "action": "建议查看原文/图片后重新巡检",
+            "status": "AI 分析未完成",
+            "action": "查看原帖/图片后重新巡检",
             "issue": "AI 分析未完成",
             "why": str(item.get("ai_error") or message or "当前只有规则初审结果，系统不会自动处置"),
             "evidence": evidence or "暂无完整的 Hy3 与 VITA 联合证据",
@@ -1192,7 +1198,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("action") == "delete_candidate":
         return {
-            "action": "建议删除（仍需管理员二次确认）",
+            "status": "内容可能违规",
+            "action": "删除这条帖子",
             "issue": issue_type,
             "why": message or "检测到高风险违规信号",
             "evidence": evidence or "请打开完整详情核对原文证据",
@@ -1200,19 +1207,34 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("action") == "review":
         return {
-            "action": "建议人工核对后再决定",
+            "status": "需要你确认",
+            "action": "查看原帖后再决定",
             "issue": issue_type,
             "why": message or "存在需要管理员确认的具体信号",
             "evidence": evidence or "请打开完整详情核对原文或图片",
             "score": score_detail,
         }
     return {
-        "action": "建议保留",
+        "status": "没有发现问题",
+        "action": "保留这条帖子",
         "issue": "未发现明确违规",
         "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与 AI 均未发现需要处置的问题"),
         "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
         "score": score_detail,
     }
+
+
+def _cn_time(value: Any, format_string: str = "%Y-%m-%d %H:%M") -> str:
+    text = str(value or "").strip()
+    if not text:
+        return "尚未巡检"
+    try:
+        parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime(format_string)
+    except (ValueError, TypeError):
+        return text
 
 
 def _reason_type(reason: Dict[str, Any]) -> str:

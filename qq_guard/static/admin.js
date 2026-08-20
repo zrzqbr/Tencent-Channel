@@ -16,6 +16,7 @@ if (scanForm) {
   const bar = progress.querySelector('[data-scan-bar]');
   const message = progress.querySelector('[data-scan-message]');
   const results = progress.querySelector('[data-scan-results]');
+  const latestScan = document.querySelector('[data-latest-scan]');
   let pollTimer = null;
 
   const renderScanState = (state) => {
@@ -33,6 +34,12 @@ if (scanForm) {
     if (state.status === 'completed') {
       results.hidden = false;
       if (state.results_url) results.href = state.results_url;
+      if (latestScan && state.finished_at) {
+        latestScan.textContent = new Intl.DateTimeFormat('zh-CN', {
+          timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', hour12: false,
+        }).format(new Date(state.finished_at)).replaceAll('/', '-');
+      }
       window.sessionStorage.removeItem('qqGuardScanStatusUrl');
     }
     if (state.status === 'failed') {
