@@ -1,6 +1,6 @@
 {% extends "base.html" %}
-{% block title %}今日待办 · 腾讯频道治理{% endblock %}
-{% block heading %}今日待办{% endblock %}
+{% block title %}待办工作台 · 腾讯频道治理{% endblock %}
+{% block heading %}待办工作台{% endblock %}
 {% block topbar_extra %}
 <div class="topbar-scan-meta"><span>最近巡检（北京时间）</span><strong data-latest-scan>{{ ((summary.latest_scan or {}).get('finished_at'))|cn_time }}</strong></div>
 <form action="{{ url_for('scan_now') }}" method="post" data-scan-form data-existing-job="{{ request.args.get('scan_job', '') }}">
@@ -8,57 +8,55 @@
   <button class="primary-button scan-button" type="submit" data-scan-button><i class="ri-radar-line" aria-hidden="true"></i>立即巡检</button>
 </form>
 {% endblock %}
-{% block page_intro %}<p class="page-subtitle">按“下一步”处理：先删风险，再移栏目，没问题就保留</p>{% endblock %}
+{% block page_intro %}<p class="page-subtitle">系统已经把内容分好类，你只需要确认下一步</p>{% endblock %}
 {% block content %}
 <section class="scan-strip" aria-label="巡检流程">
-  <div class="scan-stage completed"><i class="ri-download-cloud-2-line" aria-hidden="true"></i><span><strong>抓取内容</strong><small>读取频道新内容</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
-  <div class="scan-stage completed"><i class="ri-file-copy-2-line" aria-hidden="true"></i><span><strong>去重检查</strong><small>严格连续重复</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
-  <div class="scan-stage completed"><i class="ri-shield-check-line" aria-hidden="true"></i><span><strong>规则初审</strong><small>栏目与风险规则</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
-  <div class="scan-stage completed"><i class="ri-image-2-line" aria-hidden="true"></i><span><strong>图片识别</strong><small>Youtu-VITA</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
-  <div class="scan-stage {{ 'completed' if ai_status.status == 'ready' else 'attention' }}"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>AI 综合判断</strong><small>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</small></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
-  <div class="scan-stage current"><i class="ri-user-follow-line" aria-hidden="true"></i><span><strong>等待审批</strong><small>{{ summary.pending }} 条待处理</small></span></div>
+  <div class="scan-stage completed"><i class="ri-download-cloud-2-line" aria-hidden="true"></i><span><strong>已读取新内容</strong></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage completed"><i class="ri-file-copy-2-line" aria-hidden="true"></i><span><strong>已检查重复</strong></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage completed"><i class="ri-shield-check-line" aria-hidden="true"></i><span><strong>已检查风险</strong></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage {{ 'completed' if ai_status.status == 'ready' else 'attention' }}"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>{{ '已完成智能判断' if ai_status.status == 'ready' else '等待智能判断' }}</strong></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
+  <div class="scan-stage current"><i class="ri-user-follow-line" aria-hidden="true"></i><span><strong>等你确认 {{ summary.pending }} 条</strong></span></div>
 </section>
-<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在建立安全连接</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮 AI 分析记录</a></div>
+<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮判断依据</a></div>
 
 {% set latest = summary.latest_scan or {} %}
-<section class="scan-metric-grid" aria-label="巡检数量说明">
-  <article><span>本轮读取</span><strong data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</strong><small>本次从腾讯接口取得</small></article>
-  <article><span>本轮新增</span><strong data-scan-metric="new_feeds">{{ latest.get('new_feeds', 0) }}</strong><small>第一次发现的帖子</small></article>
-  <article><span>内容更新</span><strong data-scan-metric="updated_feeds">{{ latest.get('updated_feeds', 0) }}</strong><small>正文或摘要有变化</small></article>
-  <article><span>直接用缓存</span><strong data-scan-metric="cached_feeds">{{ latest.get('cached_feeds', 0) }}</strong><small>没有重复读取详情</small></article>
-  <article><span>累计收录</span><strong>{{ summary.discovered_feeds }}</strong><small>数据库中的不同帖子</small></article>
+<section class="scan-metric-grid" aria-label="本轮读取情况">
+  <article><span>本轮读取</span><strong data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</strong><small>从频道取得</small></article>
+  <article><span>新发现</span><strong data-scan-metric="new_feeds">{{ latest.get('new_feeds', 0) }}</strong><small>第一次看到</small></article>
+  <article><span>有更新</span><strong data-scan-metric="updated_feeds">{{ latest.get('updated_feeds', 0) }}</strong><small>内容发生变化</small></article>
+  <article><span>使用已有记录</span><strong data-scan-metric="cached_feeds">{{ latest.get('cached_feeds', 0) }}</strong><small>无需重复读取</small></article>
+  <article><span>累计内容</span><strong>{{ summary.discovered_feeds }}</strong><small>后台已收录</small></article>
 </section>
 
 <section class="task-metrics" aria-label="今日任务统计">
-  <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>今天要处理</span><strong>{{ summary.pending }}</strong><small>等你确认的内容</small></a>
-  <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>可能要删除</span><strong>{{ pending_high_count }}</strong><small>先看原因再确认</small></a>
-  <a class="task-metric warning" href="{{ url_for('dashboard', queue='placement') }}"><span>放错栏目</span><strong>{{ queue_counts.placement }}</strong><small>移动原帖，不重发</small></a>
-  <a class="task-metric info" href="{{ url_for('dashboard', queue='incomplete') }}"><span>机器没看完整</span><strong>{{ queue_counts.incomplete }}</strong><small>只能人工判断</small></a>
+  <a class="task-metric" href="{{ url_for('reviews', status='pending') }}"><span>全部待处理</span><strong>{{ summary.pending }}</strong><small>逐条确认下一步</small></a>
+  <a class="task-metric danger" href="{{ url_for('dashboard', queue='delete') }}"><span>可能违规</span><strong>{{ pending_high_count }}</strong><small>先看证据，再决定</small></a>
+  <a class="task-metric warning" href="{{ url_for('dashboard', queue='placement') }}"><span>栏目可能放错</span><strong>{{ queue_counts.placement }}</strong><small>确认后直接调整</small></a>
+  <a class="task-metric info" href="{{ url_for('dashboard', queue='incomplete') }}"><span>信息不完整</span><strong>{{ queue_counts.incomplete }}</strong><small>查看完整内容后判断</small></a>
 </section>
 
 <div class="review-workspace">
   <section class="review-queue" aria-label="审核任务队列">
-    <div class="queue-tabs" role="tablist" aria-label="审核建议分类">
-      <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">可能要删除 <b>{{ queue_counts.delete }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">放错栏目 <b>{{ queue_counts.placement }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'review' }}" href="{{ url_for('dashboard', queue='review') }}">需要你判断 <b>{{ queue_counts.review }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">机器没看完整 <b>{{ queue_counts.incomplete }}</b></a>
-      <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">没问题，可保留 <b>{{ queue_counts.allow }}</b></a>
+    <div class="queue-tabs" role="tablist" aria-label="待处理内容分类">
+      <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">可能违规 <b>{{ queue_counts.delete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">栏目可能放错 <b>{{ queue_counts.placement }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'review' }}" href="{{ url_for('dashboard', queue='review') }}">需要人工判断 <b>{{ queue_counts.review }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">信息不完整 <b>{{ queue_counts.incomplete }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">没有发现问题 <b>{{ queue_counts.allow }}</b></a>
     </div>
-    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>下一步</span><span>风险</span><span>原因</span><span>操作</span></div>
+    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 所在栏目</span><span>系统看到了什么</span><span>风险</span><span>操作</span></div>
     <div class="queue-list">
       {% for item in reviews %}{% set item_key = item.source ~ '-' ~ item.id %}
       <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}" data-review-row="{{ item_key }}">
         <div class="queue-content"><span class="risk-dot risk-{{ item.risk_level }}"></span><span><strong>{{ item.title or item.body|truncate(34) or '无标题内容' }}</strong><small>{{ item.body|striptags|truncate(46) or '暂无正文摘要' }}</small></span></div>
         <div><strong>{{ item.author_id|truncate(18, True, '') or '未知作者' }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }}</small></div>
-        <div><strong class="queue-summary">{{ item.guidance.action }}</strong><small>{{ item.guidance.why|truncate(54) }}</small></div>
-        <div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 {{ item.risk_score }}</span></div>
-        <div><strong>{{ item.guidance.issue }}</strong><small>{{ item.placement_suggestion.move_target.label if item.placement_suggestion else action_labels.get(item.action, item.action) }}</small></div>
-        <div><a class="row-review-button" href="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}" data-review-link="{{ item_key }}">处理</a></div>
+        <div><strong class="queue-summary">{{ item.guidance.status }}</strong><small>{{ item.guidance.why|truncate(54) }}</small></div>
+        <div><span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span></div>
+        <div><a class="row-review-button" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}" data-review-link="{{ item_key }}" data-dashboard-url="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}">查看并处理</a></div>
       </article>
       {% else %}<div class="queue-empty"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><strong>这一类任务已经处理完了</strong><p>可以切换上方标签继续处理其他内容。</p></div>{% endfor %}
     </div>
-    <div class="queue-footer"><span>当前显示 {{ reviews|length }} 条</span><a href="{{ url_for('reviews', status='pending') }}">进入全部内容</a></div>
+    <div class="queue-footer"><span>当前显示 {{ reviews|length }} 条</span><a href="{{ url_for('reviews', status='pending') }}">查看所有待处理内容</a></div>
   </section>
 
   <aside class="review-drawer" id="review-detail" data-review-drawer>

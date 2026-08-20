@@ -193,7 +193,13 @@ class ModerationEngine:
 
         risk_score = min(sum(reason.score for reason in reasons), 100)
         risk_level = self._risk_level(risk_score)
-        if delete_candidate_hit or risk_score >= self.settings.delete_candidate_threshold:
+        has_high_risk_evidence = any(
+            reason.severity in {"high", "critical"} for reason in reasons
+        )
+        if delete_candidate_hit or (
+            risk_score >= self.settings.delete_candidate_threshold
+            and has_high_risk_evidence
+        ):
             action = ModerationAction.DELETE_CANDIDATE
         elif risk_score >= self.settings.review_threshold:
             action = ModerationAction.REVIEW

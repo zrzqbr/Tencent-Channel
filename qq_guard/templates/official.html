@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}官方工具 · 腾讯频道治理{% endblock %}
-{% block heading %}官方工具{% endblock %}
-{% block page_intro %}<p class="page-subtitle">把腾讯官方读、写、改、审计能力做成可操作入口</p>{% endblock %}
+{% block title %}发布与互动 · 腾讯频道治理{% endblock %}
+{% block heading %}发布与互动{% endblock %}
+{% block page_intro %}<p class="page-subtitle">直接读取、发布和修改腾讯频道内容</p>{% endblock %}
 {% block content %}
 <section class="official-hero">
-  <div><span class="mode-badge"><i></i>官方 Skill {{ skill_version }}</span><h2>官方工具台</h2><p>这里不是给技术同学看的命令列表，而是后台可用的操作入口：先查清楚，再安全预演，需要真实修改时重新验证密码并写入审计。</p></div>
-  <dl><div><dt>可用工具</dt><dd>{{ capability_count }} 项</dd></div><div><dt>QQ 授权</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实写入</dt><dd>{{ '已启用审批保护' if writes_enabled else '当前关闭，只能预演' }}</dd></div></dl>
+  <div><span class="mode-badge"><i></i>腾讯官方能力已接入</span><h2>你想做什么？</h2><p>选择一项操作，频道、栏目、帖子和作者会优先从后台已有数据中选择。真正修改频道前，系统会再次核对密码和原因。</p></div>
+  <dl><div><dt>可用操作</dt><dd>{{ capability_count }} 项</dd></div><div><dt>QQ 连接</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>修改权限</dt><dd>{{ '已开启，执行前需要确认' if writes_enabled else '暂未开启真实修改' }}</dd></div></dl>
 </section>
 {% if cli_status.error %}<div class="info-banner warning-banner"><strong>能力读取不完整</strong><p>{{ cli_status.error }}</p></div>{% endif %}
-<section class="info-banner"><strong>候选数据已同步</strong><p>当前后台已同步 {{ official_sources.guilds }} 个频道、{{ official_sources.channels }} 个栏目、{{ official_sources.feeds }} 条帖子候选和 {{ official_sources.authors }} 个作者候选；评论和回复如果暂时没有缓存，还是可以手填。</p></section>
-<section class="official-workflows" aria-label="官方工具按任务分组">
+<section class="sync-summary"><span><strong>{{ official_sources.guilds }}</strong> 个频道</span><span><strong>{{ official_sources.channels }}</strong> 个栏目</span><span><strong>{{ official_sources.feeds }}</strong> 条帖子</span><span><strong>{{ official_sources.authors }}</strong> 位作者</span></section>
+<section class="official-workflows" aria-label="按工作任务选择操作">
   {% for workflow in workflows %}
   <article class="official-workflow">
     <div><strong>{{ workflow.title }}</strong><p>{{ workflow.description }}</p></div>
@@ -17,21 +17,21 @@
   </article>
   {% endfor %}
 </section>
-<section class="info-banner"><strong>操作边界</strong><p>只读查询会直接运行；写操作默认先预演，不会改动腾讯频道。真实执行必须开启服务器开关、填写原因、输入管理员密码，并自动进入操作记录。</p></section>
+<section class="info-banner"><strong>不会误操作</strong><p>读取数据会直接返回结果；发布、修改、删除等操作会先检查填写内容。真实执行前必须填写原因、输入管理员密码，结果自动进入操作记录。</p></section>
 {% for group in groups %}
 <section class="panel official-group">
-  <div class="panel-title"><div><h2>{{ group.label }}</h2><p>{{ group['items']|length }} 项官方工具</p></div></div>
+  <div class="panel-title"><div><h2>{{ group.label }}</h2><p>{{ group['items']|length }} 项可用操作</p></div></div>
   <div class="capability-grid">
     {% for item in group['items'] %}
     <a class="capability-card {{ 'high-risk' if item.is_high_risk else 'write' if item.is_write else 'read' }}" href="{{ url_for('official_capability', domain=item.domain, action=item.action) }}">
       <span class="capability-risk">{{ '删帖/禁言类' if item.is_high_risk else '会修改频道' if item.is_write else '只读查询' }}</span>
-      <strong>{{ item.title }}</strong><small>{{ item.path }}</small>
+      <strong>{{ item.title }}</strong><small>{{ '打开后选择目标并填写内容' if item.is_write else '打开后选择要查看的对象' }}</small>
     </a>
     {% endfor %}
   </div>
 </section>
 {% else %}
-<section class="panel"><div class="empty tall">当前未能从服务器 CLI 读取官方能力，请先检查登录和 CLI 版本。</div></section>
+<section class="panel"><div class="empty tall">暂时无法读取腾讯频道操作，请检查 QQ 连接状态。</div></section>
 {% endfor %}
-<section class="info-banner warning-banner"><strong>通知说明</strong><p>官方实时通知推送仅支持 OpenClaw。当前网页后台保留通知工具入口，但内容治理仍使用分页增量巡检。</p></section>
+<section class="info-banner warning-banner"><strong>消息更新方式</strong><p>后台会按巡检周期同步最新内容；通知与私信查询也可以从本页打开。</p></section>
 {% endblock %}

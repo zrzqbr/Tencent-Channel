@@ -1,18 +1,18 @@
 {% extends "base.html" %}
-{% block title %}全部内容 · 腾讯频道治理{% endblock %}
-{% block heading %}全部内容{% endblock %}
-{% block page_intro %}<p class="page-subtitle">筛选内容，批量选择，再确认保留、移动或删除</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('ai_analysis') }}"><i class="ri-brain-line" aria-hidden="true"></i>查看 AI 判断依据</a>{% endblock %}
+{% block title %}内容处理 · 腾讯频道治理{% endblock %}
+{% block heading %}内容处理{% endblock %}
+{% block page_intro %}<p class="page-subtitle">所有待处理内容都在这里，打开一条即可查看原因并完成处理</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('ai_analysis') }}"><i class="ri-brain-line" aria-hidden="true"></i>查看判断依据</a>{% endblock %}
 {% block content %}
 <section class="info-banner review-guide">
-  <strong>先看原因，再处理</strong>
-  <p>点击内容标题查看原文、图片识别和模型判断。移动或删除都要经过管理员确认，普通内容不会被机器自动处理。</p>
+  <strong>处理顺序很简单：看内容、看原因、选下一步</strong>
+  <p>调整栏目和删除都会先让你确认；系统不会替你直接改动频道。</p>
 </section>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
-    <label>审核状态<select name="status"><option value="" {{ 'selected' if not selected_status }}>全部</option>{% for key in ['pending','approved','rejected','ignored','deleted'] %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ status_labels[key] }}</option>{% endfor %}</select></label>
+    <label>处理状态<select name="status"><option value="" {{ 'selected' if not selected_status }}>全部</option>{% for key in ['pending','approved','rejected','ignored','deleted'] %}<option value="{{ key }}" {{ 'selected' if selected_status == key }}>{{ status_labels[key] }}</option>{% endfor %}</select></label>
     <label>风险等级<select name="risk"><option value="">全部</option>{% for key in ['critical','high','medium','low'] %}<option value="{{ key }}" {{ 'selected' if selected_risk == key }}>{{ risk_labels[key] }}</option>{% endfor %}</select></label>
-    <label>频道 ID<input name="guild" value="{{ selected_guild }}" placeholder="留空查看全部"></label>
+    <label>频道<select name="guild"><option value="">全部频道</option>{% for guild in nav_guilds %}<option value="{{ guild.id }}" {{ 'selected' if selected_guild == guild.id }}>{{ guild.name }}</option>{% endfor %}</select></label>
     <button class="primary-button compact" type="submit">筛选</button>
   </form>
 </section>
@@ -30,7 +30,7 @@
         </select>
         <button class="primary-button compact" type="submit" formaction="{{ url_for('prepare_bulk_move') }}" data-bulk-move disabled>移动所选</button>
       </div>
-      <small>{% if manual_delete_enabled %}删除和移动每次最多 20 条，均需密码、理由和二次确认。{% else %}真实删除未开启；栏目移动仍可使用。{% endif %}</small>
+      <small>{% if manual_delete_enabled %}删除和调整栏目都会再次确认，单次最多处理 20 条。{% else %}调整栏目可以使用；删除功能还未开启。{% endif %}</small>
     </div>
     {% set reviews = items %}{% include "partials/review_table.html" %}
   </form>

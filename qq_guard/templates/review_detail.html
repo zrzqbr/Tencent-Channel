@@ -1,63 +1,66 @@
 {% extends "base.html" %}
-{% block title %}审核详情 · 腾讯频道治理{% endblock %}
-{% block heading %}审核详情{% endblock %}
-{% block page_intro %}<p class="page-subtitle">核对原文、AI 证据和处理边界后再作决定</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回全部内容</a>{% endblock %}
+{% block title %}处理内容 · 腾讯频道治理{% endblock %}
+{% block heading %}处理内容{% endblock %}
+{% block page_intro %}<p class="page-subtitle">看清楚这条内容，再选择保留、调整栏目或删除</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容处理</a>{% endblock %}
 {% block content %}
 <div class="detail-grid">
   <section class="panel detail-main">
     <div class="detail-heading">
       <div><span class="pill">{{ section_labels.get(item.section, item.section) }}</span><h2>{{ item.title or '无标题内容' }}</h2></div>
-      <span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 · {{ item.risk_score }}</span>
+      <span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span>
     </div>
     <dl class="meta-grid">
-      <div><dt>频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>版块 ID</dt><dd>{{ item.channel_id }}</dd></div>
-      <div><dt>作者 ID</dt><dd>{{ item.author_id or '未返回' }}</dd></div><div><dt>内容 ID</dt><dd class="break-all">{{ item.item_id }}</dd></div>
-      <div><dt>策略版本</dt><dd>{{ item.policy_version }}</dd></div><div><dt>检测时间（北京时间）</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
-      <div><dt>分析来源</dt><dd>{{ 'AI 语义审核' if item.analysis_source == 'ai' else '规则降级' }}</dd></div><div><dt>模型 / 置信度</dt><dd>{{ item.ai_model or '未调用' }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</dd></div>
+      <div><dt>所在频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>所在栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div>
+      <div><dt>作者</dt><dd>{{ item.author_id or '未返回' }}</dd></div><div><dt>发现时间</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
+      <div><dt>判断方式</dt><dd>{{ '智能判断' if item.analysis_source == 'ai' else '基础内容检查' }}</dd></div><div><dt>当前处理状态</dt><dd>{{ status_labels.get(item.review_status, item.review_status) }}</dd></div>
     </dl>
     <section class="detail-recommendation">
-      <div><span>建议你做什么</span><h3>{{ item.guidance.action }}</h3></div>
-      <dl><div><dt>是什么问题</dt><dd>{{ item.guidance.issue }}</dd></div><div><dt>为什么</dt><dd>{{ item.guidance.why }}</dd></div><div><dt>关键证据</dt><dd>{{ item.guidance.evidence }}</dd></div><div><dt>分数说明</dt><dd>{{ item.guidance.score }}</dd></div></dl>
+      <div><span>系统判断</span><h3>{{ item.guidance.status }}</h3><p class="recommendation-action">你可以：{{ item.guidance.action }}</p></div>
+      <dl><div><dt>发现了什么</dt><dd>{{ item.guidance.issue }}</dd></div><div><dt>原因</dt><dd>{{ item.guidance.why }}</dd></div><div><dt>可核对证据</dt><dd>{{ item.guidance.evidence }}</dd></div><div><dt>风险说明</dt><dd>{{ item.guidance.score }}</dd></div></dl>
     </section>
-    <h3>审核执行轨迹</h3>
+    <h3>系统检查结果</h3>
     <div class="analysis-trace">
-      <article><span>01</span><div><strong>规则初审</strong><small>已完成 · {{ item.reasons|length }} 条可核对理由</small></div></article>
-      <article><span>02</span><div><strong>Youtu-VITA 图片分析</strong><small>{% if not item.media_urls %}本条无图片，无需执行{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</small></div></article>
-      <article><span>03</span><div><strong>Hy3 综合判断</strong><small>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}{% if item.ai_model %} · {{ item.ai_model }}{% endif %}</small></div></article>
-      <article><span>04</span><div><strong>管理员终审</strong><small>{{ status_labels.get(item.review_status, item.review_status) }}</small></div></article>
+      <article><span>01</span><div><strong>基础内容检查</strong><small>已完成 · {{ item.reasons|length }} 条可核对理由</small></div></article>
+      <article><span>02</span><div><strong>图片检查</strong><small>{% if not item.media_urls %}本条无图片，无需检查{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</small></div></article>
+      <article><span>03</span><div><strong>文字综合判断</strong><small>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}</small></div></article>
+      <article><span>04</span><div><strong>等待你确认</strong><small>{{ status_labels.get(item.review_status, item.review_status) }}</small></div></article>
     </div>
-    {% if item.analysis_source != 'ai' %}<div class="info-banner warning-banner"><strong>当前为规则判定，尚无可用的 Hy3 综合结论</strong><p>{{ item.ai_error or '该记录产生时 AI 未启用、未请求或尚未完成；系统不会据此自动删除普通内容。' }}</p></div>{% endif %}
-    {% if item.ai_analysis.get('summary') %}<h3>Hy3 审核摘要</h3><div class="content-box">{{ item.ai_analysis.summary }}</div>{% endif %}
-    {% if item.ai_analysis.get('vision_analysis') %}<h3>VITA 图片证据</h3><div class="content-box">{{ item.ai_analysis.vision_analysis }}</div>{% endif %}
-    {% if item.ai_error %}<div class="info-banner"><strong>AI 已安全降级</strong><p>{{ item.ai_error }}</p></div>{% endif %}
+    {% if item.analysis_source != 'ai' %}<div class="info-banner warning-banner"><strong>这条内容还没有完整的智能判断</strong><p>{{ item.ai_error|public_ai_error }}</p></div>{% endif %}
+    {% if item.ai_analysis.get('summary') %}<h3>智能判断说明</h3><div class="content-box">{{ item.ai_analysis.summary }}</div>{% endif %}
+    {% if item.ai_analysis.get('vision_analysis') %}<h3>图片检查说明</h3><div class="content-box">{{ item.ai_analysis.vision_analysis }}</div>{% endif %}
+    {% if item.ai_error %}<div class="info-banner"><strong>智能判断暂时不可用</strong><p>{{ item.ai_error|public_ai_error }}</p></div>{% endif %}
     <h3>正文</h3><div class="content-box">{{ item.body or '未保存正文；下次巡检将补齐完整内容。' }}</div>
     {% if item.media_urls %}<h3>媒体信息</h3><div class="content-box mono">{{ item.media_urls|tojson }}</div>{% endif %}
-    <h3>逐项判定理由</h3>
+    <h3>具体原因</h3>
     <div class="reason-list">
-      {% for reason in item.reasons %}<article><div><strong>{{ reason.message or '该项没有给出说明' }}</strong><span>类型：{{ reason.category or reason.code }} · 严重度：{{ risk_labels.get(reason.severity, reason.severity) }}</span></div><b>风险贡献 +{{ reason.score or 0 }}</b>{% if reason.evidence %}<p><strong>可核对证据：</strong>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">未命中敏感词、违禁推广、联系方式泄露或栏目硬规则。</p>{% endfor %}
+      {% for reason in item.reasons %}<article><div><strong>{{ reason.message or '该项没有给出说明' }}</strong><span>{{ risk_labels.get(reason.severity, reason.severity) }}风险</span></div><b>风险影响 +{{ reason.score or 0 }}</b>{% if reason.evidence %}<p><strong>原文证据：</strong>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有发现敏感词、违规推广、联系方式泄露或栏目硬规则问题。</p>{% endfor %}
     </div>
   </section>
   <aside class="panel decision-panel">
-    <h2>管理员结论</h2>
+    <h2>选择处理方式</h2>
     <p>当前状态：<strong>{{ status_labels.get(item.review_status, item.review_status) }}</strong></p>
     <form action="{{ url_for('resolve_review', source=item.source, row_id=item.id) }}" method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>处理备注<textarea name="notes" rows="4" placeholder="说明通过、驳回或忽略的原因"></textarea></label>
-      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>系统拿不准</strong><small>风险分和处理建议不一致。若仍决定保留，请核对原文并勾选下方确认。</small></span></div><label class="confirm-check"><input type="checkbox" name="conflict_confirmation" value="confirmed"><span>我已核对原文和证据，确认保留此内容</span></label>{% endif %}
+      <label>处理备注<textarea name="notes" rows="4" placeholder="需要留痕时填写原因"></textarea></label>
+      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>系统结论不一致</strong><small>请先核对原文和证据。确认保留时，需要勾选下方确认。</small></span></div><label class="confirm-check"><input type="checkbox" name="conflict_confirmation" value="confirmed"><span>我已核对原文和证据，确认保留</span></label>{% endif %}
+      <p class="action-effect">以下选项只更新后台处理记录，不会修改频道原帖。</p>
       <div class="button-grid">
-        <button class="success-button" name="resolution" value="approved" type="submit">通过</button>
-        <button class="danger-outline" name="resolution" value="rejected" type="submit">驳回</button>
-        <button class="ghost-button" name="resolution" value="ignored" type="submit">忽略</button>
+        <button class="success-button" name="resolution" value="approved" type="submit">保留并完成</button>
+        <button class="danger-outline" name="resolution" value="rejected" type="submit">记录为不通过（不删帖）</button>
+        <button class="ghost-button" name="resolution" value="ignored" type="submit">稍后处理</button>
       </div>
     </form>
+    {% if item.source == 'tencent' and item.placement_suggestion %}
+    <div class="action-block move-block"><h3>调整栏目</h3><p>系统判断这条内容更适合另一个栏目。调整只会移动原帖，不会重新发布。</p><form action="{{ url_for('prepare_bulk_move') }}" method="post" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ item.id }}"><label>调整到<select name="move_target" required>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if target.key == item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select></label><button class="primary-button full" type="submit">确认调整栏目</button></form></div>
+    {% endif %}
     {% if item.source == 'tencent' %}
     <div class="danger-zone">
       <h3>删除内容</h3>
-      <p>AI 只给建议；删除普通内容仍需重新输入管理密码、填写理由并二次确认。</p>
+      <p>删除会从腾讯频道移除这条内容。提交前需要重新输入密码、填写理由并再次确认。</p>
       <form action="{{ url_for('prepare_delete', row_id=item.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}>{{ '已删除' if item.delete_status == 'deleted' else '进入删除确认' }}</button>
+        <button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}>{{ '已删除' if item.delete_status == 'deleted' else '确认删除这条内容' }}</button>
       </form>
       {% if item.delete_error %}<p class="error-text">{{ item.delete_error }}</p>{% endif %}
     </div>

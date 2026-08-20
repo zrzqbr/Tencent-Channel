@@ -159,7 +159,7 @@ class ServiceTests(unittest.IsolatedAsyncioTestCase):
             adapter,
         )
         decision = await service.handle(self.item("item-quality", body="哈哈哈哈哈"))
-        self.assertEqual(decision.recommended_action, "delete_candidate")
+        self.assertEqual(decision.recommended_action, "review")
         self.assertEqual(decision.delete_status, "review_required")
         self.assertEqual(adapter.deleted, [])
 

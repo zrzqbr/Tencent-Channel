@@ -49,9 +49,9 @@ from .tencent_monitor import TencentChannelMonitor
 SECTION_LABELS = {section.value: section.display_name for section in Section}
 RISK_LABELS = {"low": "低", "medium": "中", "high": "高", "critical": "严重"}
 ACTION_LABELS = {
-    "allow": "没问题，可保留",
-    "review": "拿不准，人工看",
-    "delete_candidate": "高风险，建议删",
+    "allow": "没有发现问题",
+    "review": "需要人工判断",
+    "delete_candidate": "可能违规",
 }
 STATUS_LABELS = {
     "pending": "待审核",
@@ -64,26 +64,26 @@ STATUS_LABELS = {
 }
 AI_STATUS_LABELS = {
     "completed": "已完成",
-    "completed_text_only": "文字已完成，图片降级",
-    "cached": "已完成（缓存）",
-    "cached_text_only": "文字已完成（缓存），图片降级",
-    "fallback": "已安全降级",
-    "disabled": "未启用",
-    "not_requested": "未请求",
-    "failed": "执行失败",
+    "completed_text_only": "文字判断完成，图片需人工核对",
+    "cached": "已完成",
+    "cached_text_only": "文字判断完成，图片需人工核对",
+    "fallback": "仅完成基础检查",
+    "disabled": "尚未开启",
+    "not_requested": "尚未完成",
+    "failed": "暂时不可用",
 }
 AI_PUBLIC_STATUS_LABELS = {
     "ready": "已连接，可执行",
-    "missing_key": "等待配置 API 密钥",
+    "missing_key": "尚未连接",
     "disabled": "未启用",
 }
 VISION_STATUS_LABELS = {
     "ready": "已连接，有图片时执行",
     "completed": "已完成",
-    "cached": "已完成（缓存）",
-    "not_requested": "未请求",
-    "failed": "执行失败，已转人工",
-    "missing_key": "等待配置 API 密钥",
+    "cached": "已完成",
+    "not_requested": "尚未检查",
+    "failed": "暂时不可用，需要人工核对",
+    "missing_key": "尚未连接",
     "disabled": "未启用",
 }
 
@@ -123,6 +123,7 @@ def create_app(
     guard_config = GuardConfig.from_file(str(resolved_config))
     app = Flask(__name__)
     app.jinja_env.filters["cn_time"] = _cn_time
+    app.jinja_env.filters["public_ai_error"] = _public_ai_error
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config.update(
         SECRET_KEY=os.environ.get("QQ_GUARD_SECRET_KEY", ""),
@@ -271,8 +272,10 @@ def create_app(
                 item["ui_queue"] = "review"
             elif item.get("placement_suggestion"):
                 item["ui_queue"] = "placement"
-            elif item.get("action") == "delete_candidate":
+            elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
                 item["ui_queue"] = "delete"
+            elif item.get("action") == "delete_candidate":
+                item["ui_queue"] = "review"
             elif current.ai_review.enabled and (
                 item.get("analysis_source") != "ai"
                 or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
@@ -296,7 +299,7 @@ def create_app(
             if item["has_conflict"]:
                 item["ui_summary"] = "系统自己拿不准，先别直接处理"
             elif item["ui_queue"] == "incomplete":
-                item["ui_summary"] = item.get("ai_error") or "机器没有看完整，需要你核对原帖"
+                item["ui_summary"] = _public_ai_error(item.get("ai_error"))
             elif item["ui_queue"] == "placement":
                 target_label = item["placement_suggestion"]["move_target"]["label"]
                 item["ui_summary"] = f"内容适合放到{target_label}"
@@ -305,6 +308,7 @@ def create_app(
             else:
                 item["ui_summary"] = summary_text or first_reason or "没发现明显问题，可以保留"
             item["guidance"] = _review_guidance(item)
+            _set_review_risk_display(item)
 
         selected_queue = request.args.get("queue", "")
         if selected_queue not in queue_counts:
@@ -330,9 +334,7 @@ def create_app(
             selected_item=selected_item,
             selected_queue=selected_queue,
             queue_counts=queue_counts,
-            pending_high_count=sum(
-                item.get("risk_level") in {"high", "critical"} for item in reviews
-            ),
+            pending_high_count=queue_counts["delete"],
             scans=scans,
             config=current,
             ai_status=ai_status,
@@ -354,6 +356,29 @@ def create_app(
         for item in items:
             if item["id"] in suggestion_by_id:
                 item["placement_suggestion"] = suggestion_by_id[item["id"]]
+            item["has_conflict"] = (
+                item.get("risk_level") in {"high", "critical"}
+                and item.get("action") == "allow"
+            ) or (
+                item.get("risk_level") == "low"
+                and item.get("action") == "delete_candidate"
+            )
+            if item["has_conflict"]:
+                item["ui_queue"] = "review"
+            elif item.get("placement_suggestion"):
+                item["ui_queue"] = "placement"
+            elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
+                item["ui_queue"] = "delete"
+            elif item.get("action") == "delete_candidate":
+                item["ui_queue"] = "review"
+            elif current.ai_review.enabled and item.get("analysis_source") != "ai":
+                item["ui_queue"] = "incomplete"
+            elif item.get("action") == "review":
+                item["ui_queue"] = "review"
+            else:
+                item["ui_queue"] = "allow"
+            item["guidance"] = _review_guidance(item)
+            _set_review_risk_display(item)
         return render_template(
             "reviews.html",
             items=items,
@@ -437,8 +462,10 @@ def create_app(
             item["ui_queue"] = "review"
         elif item.get("placement_suggestion"):
             item["ui_queue"] = "placement"
-        elif item.get("action") == "delete_candidate":
+        elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
             item["ui_queue"] = "delete"
+        elif item.get("action") == "delete_candidate":
+            item["ui_queue"] = "review"
         elif current.ai_review.enabled and item.get("analysis_source") != "ai":
             item["ui_queue"] = "incomplete"
         elif item.get("action") == "review":
@@ -446,7 +473,12 @@ def create_app(
         else:
             item["ui_queue"] = "allow"
         item["guidance"] = _review_guidance(item)
-        return render_template("review_detail.html", item=item)
+        _set_review_risk_display(item)
+        return render_template(
+            "review_detail.html",
+            item=item,
+            move_targets=_configured_move_targets(current),
+        )
 
     @app.post("/reviews/<source>/<int:row_id>/resolve")
     @login_required
@@ -1324,7 +1356,7 @@ def _official_workflows(capabilities) -> list:
         (
             "risk",
             "处理风险",
-            "删除、禁言、移出成员等高影响动作，默认先预演。",
+            "删除、禁言、移出成员等高影响动作，会先检查填写内容。",
             ("del-feed", "delete-and-mute", "modify-member-shut-up", "kick-guild-member"),
         ),
         (
@@ -1430,7 +1462,9 @@ def _official_form_fields(schema: Dict[str, Any], config: GuardConfig, recent_re
             {
                 "name": flag_name,
                 "required": bool(flag.get("required")),
-                "description": str(flag.get("description") or flag_name),
+                "description": _official_field_label(
+                    flag_name, str(flag.get("description") or flag_name)
+                ),
                 "value": value,
                 "input_kind": input_kind,
                 "options": options,
@@ -1440,6 +1474,29 @@ def _official_form_fields(schema: Dict[str, Any], config: GuardConfig, recent_re
             }
         )
     return fields
+
+
+def _official_field_label(name: str, description: str) -> str:
+    normalized = str(name or "").casefold().replace("_", "-")
+    if "guild-id" in normalized:
+        return "频道"
+    if "channel-id" in normalized or "board-id" in normalized:
+        if any(token in normalized for token in ("target", "to-", "dest")):
+            return "目标栏目"
+        if any(token in normalized for token in ("source", "from-", "current", "original")):
+            return "当前栏目"
+        return "栏目"
+    if any(token in normalized for token in ("feed-id", "post-id", "thread-id")):
+        return "帖子"
+    if "comment-id" in normalized:
+        return "评论"
+    if "reply-id" in normalized:
+        return "回复"
+    if "author-id" in normalized:
+        return "作者"
+    if "user-id" in normalized or "member-id" in normalized:
+        return "成员"
+    return description.replace(" ID", "编号")
 
 
 def _official_guild_options(config: GuardConfig, recent_reviews) -> list:
@@ -1549,25 +1606,62 @@ def _official_author_options(recent_reviews) -> list:
 def _official_placeholder(name: str, value_type: str) -> str:
     normalized = str(name or "").casefold().replace("_", "-")
     if "guild" in normalized:
-        return "请选择频道 ID"
+        return "请选择频道"
     if "channel" in normalized or "board" in normalized:
-        return "请选择栏目 ID"
+        return "请选择栏目"
     if any(token in normalized for token in ("feed", "post", "thread", "content")):
-        return "请选择帖子 ID"
+        return "请选择帖子"
     if any(token in normalized for token in ("user", "member", "author")):
-        return "请选择用户 ID"
+        return "请选择成员"
     if any(token in normalized for token in ("comment", "reply")):
-        return "请选择或填写评论 ID"
+        return "请选择或填写评论编号"
     if value_type in {"int", "integer"}:
-        return "请输入数字 ID"
+        return "请输入数字编号"
     return "请输入值"
+
+
+def _public_ai_error(value: Any) -> str:
+    message = str(value or "").strip()
+    if not message:
+        return "智能判断尚未完成，请查看完整内容后人工确认"
+    normalized = message.casefold()
+    if any(token in normalized for token in ("api_key", "api 密钥", "tokenhub", "缺少腾讯云")):
+        return "智能判断服务尚未连接，请查看完整内容后人工确认"
+    if "尚未启用" in message or "未启用" in message:
+        return "智能判断服务尚未开启，请查看完整内容后人工确认"
+    return "智能判断服务暂时不可用，请查看完整内容后人工确认"
 
 
 def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
     reasons = [reason for reason in item.get("reasons", []) if isinstance(reason, dict)]
     scored = [reason for reason in reasons if int(reason.get("score") or 0) > 0]
     primary = next(
-        (reason for reason in reasons if reason.get("code") not in {"ai_score_normalized", "ai_action_normalized"}),
+        (
+            reason
+            for reason in reasons
+            if str(reason.get("code") or "").casefold()
+            in {
+                "sensitive_term_zh",
+                "sensitive_term_en",
+                "repeated_characters",
+                "possible_gibberish",
+                "contact_information_detected",
+                "external_link_not_allowed",
+            }
+        ),
+        None,
+    ) or next(
+        (
+            reason
+            for reason in reasons
+            if reason.get("code")
+            not in {
+                "ai_score_normalized",
+                "ai_action_normalized",
+                "section_mismatch",
+                "classification_uncertain",
+            }
+        ),
         reasons[0] if reasons else {},
     )
     issue_type = _reason_type(primary)
@@ -1581,9 +1675,9 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
 
     if item.get("has_conflict"):
         return {
-            "status": "系统拿不准",
-            "action": "先查看原帖，别直接删",
-            "issue": "结论不一致",
+            "status": "系统结论不一致",
+            "action": "查看完整内容后决定",
+            "issue": "两项检查结果不一致",
             "why": f"风险分是 {int(item.get('risk_score') or 0)} 分，但处理建议又是“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”；平台已拦住一键处理。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
             "score": score_detail,
@@ -1593,26 +1687,35 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         target = suggestion["move_target"]["label"]
         classification_reasons = list((item.get("classification") or {}).get("reasons") or [])
         return {
-            "status": "栏目放错了",
-            "action": f"移动到“{target}”",
-            "issue": "栏目不合适",
+            "status": "栏目可能放错",
+            "action": f"调整到“{target}”",
+            "issue": "内容和当前栏目不匹配",
             "why": suggestion.get("placement_reason") or message or "内容语义与当前栏目定位不一致",
             "evidence": evidence or str(classification_reasons[0] if classification_reasons else "AI 分类结果与当前栏目不同"),
             "score": "栏目调整与违规删除分开判断；错投本身不等于违禁内容",
         }
     if item.get("ui_queue") == "incomplete":
         return {
-            "status": "机器没看完整",
-            "action": "查看原帖后决定",
-            "issue": "分析不完整",
-            "why": str(item.get("ai_error") or message or "当前只有规则初审结果，平台不会自动处理这条内容"),
-            "evidence": evidence or "暂无完整的 Hy3 与 VITA 联合证据",
+            "status": "信息还不完整",
+            "action": "查看完整内容后决定",
+            "issue": "系统暂时无法完整判断",
+            "why": _public_ai_error(item.get("ai_error")) if item.get("ai_error") else message or "当前只有规则初审结果，平台不会自动处理这条内容",
+            "evidence": evidence or "暂无完整的文字和图片判断依据",
             "score": score_detail,
+        }
+    if item.get("action") == "delete_candidate" and not _has_deletion_evidence(item):
+        return {
+            "status": "需要人工判断",
+            "action": "查看完整内容后决定",
+            "issue": issue_type,
+            "why": message or "累计风险分较高，但没有足以直接建议删除的高风险证据",
+            "evidence": evidence or "当前只有栏目、内容质量或分类不确定等中等风险信号",
+            "score": f"累计分数较高，但删除必须有明确高风险证据；{score_detail}",
         }
     if item.get("action") == "delete_candidate":
         return {
-            "status": "可能需要删除",
-            "action": "进入删除确认",
+            "status": "发现高风险信号",
+            "action": "查看证据后决定是否删除",
             "issue": issue_type,
             "why": message or "检测到高风险违规信号",
             "evidence": evidence or "请打开完整详情核对原文证据",
@@ -1620,8 +1723,8 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("action") == "review":
         return {
-            "status": "需要你判断",
-            "action": "看原帖后决定",
+            "status": "需要人工判断",
+            "action": "查看完整内容后决定",
             "issue": issue_type,
             "why": message or "存在需要管理员确认的具体信号",
             "evidence": evidence or "请打开完整详情核对原文或图片",
@@ -1629,12 +1732,45 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     return {
         "status": "没有发现问题",
-        "action": "保留",
+        "action": "可以保留",
         "issue": "未发现明确违规",
-        "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与 AI 均未发现需要处置的问题"),
+        "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与智能判断均未发现需要处置的问题"),
         "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
         "score": score_detail,
     }
+
+
+def _has_deletion_evidence(item: Dict[str, Any]) -> bool:
+    legacy_high_risk_codes = (
+        "sensitive_term",
+        "scam",
+        "porn",
+        "gambl",
+        "malware",
+        "violence",
+    )
+    for reason in item.get("reasons", []):
+        if not isinstance(reason, dict):
+            continue
+        if bool(reason.get("auto_delete_eligible")):
+            return True
+        if str(reason.get("severity") or "").casefold() in {"high", "critical"}:
+            return True
+        code = str(reason.get("code") or "").casefold()
+        if any(token in code for token in legacy_high_risk_codes):
+            return True
+    return False
+
+
+def _set_review_risk_display(item: Dict[str, Any]) -> None:
+    score = int(item.get("risk_score") or 0)
+    if item.get("action") == "delete_candidate" and not _has_deletion_evidence(item):
+        item["ui_risk_level"] = "medium"
+        item["risk_text"] = f"累计风险分 {score}"
+        return
+    risk_level = str(item.get("risk_level") or "low")
+    item["ui_risk_level"] = risk_level
+    item["risk_text"] = f"{RISK_LABELS.get(risk_level, risk_level)}风险 {score}"
 
 
 def _cn_time(value: Any, format_string: str = "%Y-%m-%d %H:%M") -> str:
@@ -1653,10 +1789,13 @@ def _cn_time(value: Any, format_string: str = "%Y-%m-%d %H:%M") -> str:
 def _reason_type(reason: Dict[str, Any]) -> str:
     code = str(reason.get("code") or "").casefold()
     category = str(reason.get("category") or "").casefold()
-    value = f"{code} {category}"
+    message = str(reason.get("message") or "").casefold()
+    value = f"{code} {category} {message}"
     mappings = (
         (("sensitive_term", "敏感词", "违禁词"), "敏感词/违禁词"),
-        (("spam", "灌水", "垃圾"), "垃圾灌水"),
+        (("repeated_characters", "spam", "灌水", "垃圾"), "重复或灌水内容"),
+        (("possible_gibberish", "无语义", "乱码"), "疑似无效内容"),
+        (("low_information", "quality", "有效信息"), "内容质量"),
         (("scam", "诈骗"), "诈骗风险"),
         (("porn", "色情"), "色情内容"),
         (("gambl", "赌博"), "赌博内容"),

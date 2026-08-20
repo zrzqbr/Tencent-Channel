@@ -128,6 +128,7 @@ const reviewDrawer = document.querySelector('[data-review-drawer]');
 if (reviewDrawer) {
   document.querySelectorAll('[data-review-link]').forEach((link) => {
     link.addEventListener('click', (event) => {
+      if (window.matchMedia('(max-width: 1100px)').matches) return;
       const key = link.dataset.reviewLink;
       const template = document.querySelector(`[data-review-template="${CSS.escape(key)}"]`);
       if (!template) return;
@@ -136,7 +137,7 @@ if (reviewDrawer) {
       document.querySelectorAll('[data-review-row]').forEach((row) => {
         row.classList.toggle('selected', row.dataset.reviewRow === key);
       });
-      window.history.replaceState(null, '', link.href);
+      window.history.replaceState(null, '', link.dataset.dashboardUrl || window.location.href);
     });
   });
 }

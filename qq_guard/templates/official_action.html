@@ -1,14 +1,14 @@
 {% extends "base.html" %}
-{% block title %}{{ capability.title }} · 官方工具{% endblock %}
+{% block title %}{{ capability.title }} · 发布与互动{% endblock %}
 {% block heading %}{{ capability.title }}{% endblock %}
-{% block page_intro %}<p class="page-subtitle">{{ schema.description }} · {{ capability.path }}</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('official_capabilities') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回官方工具</a>{% endblock %}
+{% block page_intro %}<p class="page-subtitle">选择目标并完成这项操作</p>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('official_capabilities') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回发布与互动</a>{% endblock %}
 {% block content %}
 <section class="info-banner {{ 'warning-banner' if capability.is_write }}">
   <strong>{{ '可能删帖或影响成员' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只读取腾讯官方数据' }}</strong>
-  <p>{% if capability.is_write %}建议先点“安全预演”。预演只检查参数和影响，不会真的改频道；真实执行会要求密码、原因和确认，并进入操作记录。{% else %}这个工具只读取数据，返回结果会隐藏 Token、Cookie、分页游标等敏感字段。{% endif %}</p>
+  <p>{% if capability.is_write %}先使用“检查填写内容”，确认目标和内容无误后再选择真实执行。真实执行会要求密码、原因和确认。{% else %}选择要查看的对象后直接查询，登录信息等敏感字段不会显示。{% endif %}</p>
 </section>
-<section class="info-banner"><strong>候选数据已同步</strong><p>当前后台已同步 {{ official_sources.guilds }} 个频道、{{ official_sources.channels }} 个栏目、{{ official_sources.feeds }} 条帖子候选和 {{ official_sources.authors }} 个作者候选。评论、回复这类项如果暂时没有缓存，仍可手填。</p></section>
+<section class="info-banner"><strong>已有数据可以直接选择</strong><p>频道、栏目、帖子和作者会优先显示为下拉选项；评论或回复尚未同步时可以手动填写。</p></section>
 {% if capability.note %}<section class="info-banner warning-banner"><strong>官方使用约束</strong><p>{{ capability.note }}</p></section>{% endif %}
 {% if error %}<div class="flash error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ error }}</div>{% endif %}
 <section class="panel">
@@ -25,11 +25,11 @@
       </label>
     {% endfor %}
     </div>
-    <details class="advanced-parameters"><summary>更多参数</summary><p>只在官方工具需要复杂对象或数组时填写，会与上面的字段合并。</p><textarea name="advanced_json" rows="5" placeholder='{"字段名":"值"}'></textarea></details>
+    <details class="advanced-parameters"><summary>高级填写项</summary><p>只有当前操作明确需要复杂数据时才填写。</p><textarea name="advanced_json" rows="5" placeholder='{"字段名":"值"}'></textarea></details>
     {% if capability.is_write %}
     <fieldset class="execution-box"><legend>执行方式</legend>
-      <label class="radio-option"><input type="radio" name="execution_mode" value="preview" checked><span><strong>安全预演</strong><small>只检查，不真实修改</small></span></label>
-      <label class="radio-option"><input type="radio" name="execution_mode" value="live" {{ 'disabled' if not writes_enabled }}><span><strong>真实执行</strong><small>{{ '需要密码、原因和确认' if writes_enabled else '当前关闭，只能预演' }}</small></span></label>
+      <label class="radio-option"><input type="radio" name="execution_mode" value="preview" checked><span><strong>检查填写内容</strong><small>不会修改腾讯频道</small></span></label>
+      <label class="radio-option"><input type="radio" name="execution_mode" value="live" {{ 'disabled' if not writes_enabled }}><span><strong>确认并执行</strong><small>{{ '需要密码、原因和确认' if writes_enabled else '服务器暂未开启真实修改' }}</small></span></label>
     </fieldset>
     <section class="live-confirmation" data-live-confirmation hidden>
       <label>操作原因<input name="reason" maxlength="300" placeholder="至少填写 4 个字"></label>
@@ -38,10 +38,10 @@
       {% if capability.is_high_risk %}<label>高风险确认文字<input name="confirmation_phrase" placeholder="请输入：确认执行" autocomplete="off"></label>{% endif %}
     </section>
     {% endif %}
-    <button class="{{ 'danger-button' if capability.is_high_risk else 'primary-button' }}" type="submit">{{ '提交' if capability.is_write else '运行查询' }}</button>
+    <button class="{{ 'danger-button' if capability.is_high_risk else 'primary-button' }}" type="submit">{{ '继续' if capability.is_write else '查看结果' }}</button>
   </form>
 </section>
 {% if result is not none %}
-<section class="panel official-result"><div class="panel-title"><div><h2>官方返回结果</h2><p>敏感登录字段已经隐藏，本次读取、预演或执行已写入操作记录。</p></div></div><pre>{{ result|tojson(indent=2) }}</pre></section>
+<section class="panel official-result"><div class="panel-title"><div><h2>操作结果</h2><p>敏感登录信息已经隐藏，本次操作已写入操作记录。</p></div></div><pre>{{ result|tojson(indent=2) }}</pre></section>
 {% endif %}
 {% endblock %}

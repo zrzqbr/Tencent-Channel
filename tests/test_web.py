@@ -183,7 +183,7 @@ class WebTests(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("今日待办".encode("utf-8"), response.data)
+        self.assertIn("待办工作台".encode("utf-8"), response.data)
         return response
 
     def insert_tencent_review(
@@ -230,33 +230,65 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
-        self.assertIn("抓取内容".encode("utf-8"), response.data)
-        self.assertIn("图片识别".encode("utf-8"), response.data)
-        self.assertIn("AI 综合判断".encode("utf-8"), response.data)
-        self.assertIn("等待审批".encode("utf-8"), response.data)
-        self.assertIn("全部内容".encode("utf-8"), response.data)
+        self.assertIn("已读取新内容".encode("utf-8"), response.data)
+        self.assertIn("已检查风险".encode("utf-8"), response.data)
+        self.assertIn("等待智能判断".encode("utf-8"), response.data)
+        self.assertIn("等你确认".encode("utf-8"), response.data)
+        self.assertIn("内容处理".encode("utf-8"), response.data)
 
     def test_dashboard_exposes_task_queues_and_review_drawer(self):
         self.insert_tencent_review()
         response = self.login()
-        self.assertIn("没问题，可保留".encode("utf-8"), response.data)
-        self.assertIn("放错栏目".encode("utf-8"), response.data)
-        self.assertIn("需要你判断".encode("utf-8"), response.data)
-        self.assertIn("可能要删除".encode("utf-8"), response.data)
-        self.assertIn("机器没看完整".encode("utf-8"), response.data)
-        self.assertIn("下一步".encode("utf-8"), response.data)
-        self.assertIn("问题类型".encode("utf-8"), response.data)
-        self.assertIn("看证据和分数".encode("utf-8"), response.data)
+        self.assertIn("没有发现问题".encode("utf-8"), response.data)
+        self.assertIn("栏目可能放错".encode("utf-8"), response.data)
+        self.assertIn("需要人工判断".encode("utf-8"), response.data)
+        self.assertIn("可能违规".encode("utf-8"), response.data)
+        self.assertIn("信息不完整".encode("utf-8"), response.data)
+        self.assertIn("系统看到了什么".encode("utf-8"), response.data)
+        self.assertIn("发现了什么".encode("utf-8"), response.data)
+        self.assertIn("查看证据和风险说明".encode("utf-8"), response.data)
+
+    def test_quality_scores_without_high_risk_evidence_do_not_suggest_delete(self):
+        row_id = self.insert_tencent_review(title="哈哈哈哈哈")
+        reasons = [
+            {
+                "code": "low_information_content",
+                "category": "quality",
+                "severity": "medium",
+                "message": "正文有效信息量低于当前栏目最低要求",
+                "score": 25,
+                "auto_delete_eligible": False,
+            },
+            {
+                "code": "repeated_characters",
+                "category": "quality",
+                "severity": "medium",
+                "message": "内容主要由重复字符组成，疑似灌水或测试内容",
+                "score": 25,
+                "auto_delete_eligible": False,
+            },
+        ]
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET reasons_json = ? WHERE id = ?",
+                (json.dumps(reasons, ensure_ascii=False), row_id),
+            )
+
+        response = self.login()
+
+        self.assertIn("需要人工判断".encode("utf-8"), response.data)
+        self.assertIn("疑似灌水或测试内容".encode("utf-8"), response.data)
+        self.assertNotIn("你可以：查看证据后决定是否删除".encode("utf-8"), response.data)
 
     def test_official_page_groups_tools_by_admin_tasks(self):
         self.login()
         response = self.client.get("/official")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("官方工具台".encode("utf-8"), response.data)
+        self.assertIn("你想做什么".encode("utf-8"), response.data)
         self.assertIn("查清楚".encode("utf-8"), response.data)
         self.assertIn("处理风险".encode("utf-8"), response.data)
-        self.assertIn("当前关闭，只能预演".encode("utf-8"), response.data)
+        self.assertIn("暂未开启真实修改".encode("utf-8"), response.data)
 
     def test_official_action_uses_synced_dropdown_candidates(self):
         self.insert_tencent_review(feed_id="feed-sync", title="同步候选帖子")
@@ -280,6 +312,10 @@ class WebTests(unittest.TestCase):
         self.assertIn("同步候选帖子".encode("utf-8"), response.data)
         self.assertIn("WorkBuddy · 1".encode("utf-8"), response.data)
         self.assertIn("WorkBuddy · 实用文章 · 3".encode("utf-8"), response.data)
+        self.assertIn(">频道<b".encode("utf-8"), response.data)
+        self.assertIn(">栏目<b".encode("utf-8"), response.data)
+        self.assertIn(">帖子<b".encode("utf-8"), response.data)
+        self.assertNotIn(">频道 ID<b".encode("utf-8"), response.data)
 
     def test_utc_scan_time_is_displayed_as_beijing_time(self):
         self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")
@@ -290,10 +326,24 @@ class WebTests(unittest.TestCase):
 
         response = self.client.get(f"/reviews/tencent/{row_id}")
 
-        self.assertIn("进入删除确认".encode("utf-8"), response.data)
+        self.assertIn("确认删除这条内容".encode("utf-8"), response.data)
         self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
-        self.assertIn("风险贡献 +80".encode("utf-8"), response.data)
+        self.assertIn("风险影响 +80".encode("utf-8"), response.data)
+
+    def test_review_detail_hides_internal_ai_connection_error(self):
+        row_id = self.insert_tencent_review(title="等待智能判断")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET ai_error = ? WHERE id = ?",
+                ("缺少 TENCENT_TOKENHUB_API_KEY", row_id),
+            )
+        self.login()
+
+        response = self.client.get(f"/reviews/tencent/{row_id}")
+
+        self.assertNotIn(b"TENCENT_TOKENHUB_API_KEY", response.data)
+        self.assertIn("智能判断服务尚未连接".encode("utf-8"), response.data)
 
     def test_conflicting_high_risk_allow_requires_explicit_confirmation(self):
         row_id = self.insert_tencent_review(title="风险与建议冲突")
@@ -349,7 +399,7 @@ class WebTests(unittest.TestCase):
             data={"csrf_token": self.csrf(response), "param__feed-id": "B_test"},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("官方返回".encode("utf-8"), response.data)
+        self.assertIn("操作结果".encode("utf-8"), response.data)
         self.assertEqual(
             self.fake_cli.capability_calls[-1],
             ("feed", "get-feed-detail", {"feed_id": "B_test"}, False, False),
@@ -461,19 +511,19 @@ class WebTests(unittest.TestCase):
         self.login()
         response = self.client.get(f"/reviews/tencent/{row_id}")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("审核执行轨迹".encode("utf-8"), response.data)
-        self.assertIn("当前为规则判定".encode("utf-8"), response.data)
-        self.assertIn("Youtu-VITA 图片分析".encode("utf-8"), response.data)
-        self.assertIn("Hy3 综合判断".encode("utf-8"), response.data)
+        self.assertIn("系统检查结果".encode("utf-8"), response.data)
+        self.assertIn("还没有完整的智能判断".encode("utf-8"), response.data)
+        self.assertIn("图片检查".encode("utf-8"), response.data)
+        self.assertIn("文字综合判断".encode("utf-8"), response.data)
 
     def test_ai_analysis_page_exposes_conclusion_or_fallback_reason(self):
         self.insert_tencent_review()
         self.login()
         response = self.client.get("/ai-analysis")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("AI 判断依据".encode("utf-8"), response.data)
-        self.assertIn("规则判定".encode("utf-8"), response.data)
-        self.assertIn("本条没有执行大模型分析".encode("utf-8"), response.data)
+        self.assertIn("判断依据".encode("utf-8"), response.data)
+        self.assertIn("只有规则结果".encode("utf-8"), response.data)
+        self.assertIn("本条只有规则检查结果".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
 
     def test_delete_requires_second_confirmation_and_reauthentication(self):
@@ -689,8 +739,8 @@ class WebTests(unittest.TestCase):
             )
         self.login()
         response = self.client.get("/placements")
-        self.assertIn("栏目移动".encode("utf-8"), response.data)
-        self.assertIn("建议移入：WorkBuddy · 实用文章".encode("utf-8"), response.data)
+        self.assertIn("栏目调整".encode("utf-8"), response.data)
+        self.assertIn("调整到：WorkBuddy · 实用文章".encode("utf-8"), response.data)
         self.assertIn("图文案例文章".encode("utf-8"), response.data)
         self.assertIn(f'value="{row_id}"'.encode(), response.data)
 

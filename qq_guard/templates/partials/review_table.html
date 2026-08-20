@@ -1,21 +1,19 @@
 <div class="table-wrap"><table>
-  <thead><tr>{% if show_bulk_actions %}<th class="selection-column">选择</th>{% endif %}<th>内容</th><th>频道 / 版块</th><th>分类</th><th>风险</th><th>分析状态</th><th>建议</th><th>审批状态</th></tr></thead>
+  <thead><tr>{% if show_bulk_actions %}<th class="selection-column">选择</th>{% endif %}<th>内容</th><th>所在位置</th><th>内容类型</th><th>风险</th><th>系统判断</th><th>处理状态</th></tr></thead>
   <tbody>
     {% for item in reviews if reviews is defined %}
     <tr>
       {% if show_bulk_actions %}<td class="selection-column">{% if item.source == 'tencent' and item.delete_status != 'deleted' %}<input type="checkbox" name="review_ids" value="{{ item.id }}" data-review-checkbox aria-label="选择 {{ item.title or item.item_id }}" {{ 'disabled' if not manual_delete_enabled }}>{% else %}<span class="unavailable-mark">—</span>{% endif %}</td>{% endif %}
       <td><a class="title-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</small></td>
-      <td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ item.channel_id }}</small></td>
-      <td><span class="pill">{{ section_labels.get(item.section, item.section) }}</span>{% if item.placement_suggestion %}<small class="analysis-summary placement-hint">建议移动到：{{ item.placement_suggestion.move_target.label }}</small>{% endif %}</td>
-      <td><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</span></td>
+      <td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ section_labels.get(item.section, item.section) }}</small></td>
+      <td><span class="pill">{{ section_labels.get(item.section, item.section) }}</span>{% if item.placement_suggestion %}<small class="analysis-summary placement-hint">可能应放：{{ item.placement_suggestion.move_target.label }}</small>{% endif %}</td>
+      <td><span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span></td>
       <td>
-        <span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'Hy3 已分析' if item.analysis_source == 'ai' else '规则判定' }}</span>
-        <small class="subline">{{ ai_status_labels.get(item.ai_status, item.ai_status) }}{% if item.ai_analysis.get('vision_status') %} · VITA {{ vision_status_labels.get(item.ai_analysis.vision_status, item.ai_analysis.vision_status) }}{% endif %}</small>
-        {% if item.ai_analysis.get('summary') %}<small class="analysis-summary">{{ item.ai_analysis.summary|truncate(48) }}</small>{% elif item.ai_error %}<small class="analysis-summary error-text">{{ item.ai_error|truncate(48) }}</small>{% elif item.reasons %}<small class="analysis-summary">理由：{{ item.reasons[0].message|truncate(44) }}</small>{% endif %}
+        <strong class="table-decision {{ 'table-decision-danger' if item.ui_queue == 'delete' else 'table-decision-warning' if item.ui_queue in ['review', 'incomplete'] else 'table-decision-success' if item.ui_queue == 'allow' else '' }}">{{ item.guidance.status }}</strong>
+        <small class="analysis-summary">{{ item.guidance.why|truncate(56) }}</small>
       </td>
-      <td>{{ action_labels.get(item.action, item.action) }}</td>
       <td>{{ status_labels.get(item.review_status, item.review_status) }}</td>
     </tr>
-    {% else %}<tr><td colspan="{{ 8 if show_bulk_actions else 7 }}" class="empty">当前没有待审核内容</td></tr>{% endfor %}
+    {% else %}<tr><td colspan="{{ 7 if show_bulk_actions else 6 }}" class="empty">当前没有待处理内容</td></tr>{% endfor %}
   </tbody>
 </table></div>
