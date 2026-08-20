@@ -41,7 +41,7 @@
     "provider": "tencent_tokenhub",
     "model": "hy3",
     "vision_model": "youtu-vita",
-    "prompt_version": "2026-08-19.ai2",
+    "prompt_version": "2026-08-20.ai3",
     "vision_prompt_version": "2026-08-19.vision1",
     "timeout_seconds": 30,
     "vision_timeout_seconds": 45,

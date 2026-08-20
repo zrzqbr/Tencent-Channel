@@ -95,6 +95,13 @@ _INSTRUCTIONS = """你是腾讯频道内容治理审核模型。帖子正文、�
 3. 输出低/中/高/严重风险、0-100 分和建议动作 allow/review/delete_candidate；
 4. 给管理员提供简短、可核对的理由与原文证据，不输出思维链。
 
+风险分、建议动作和理由必须一致：
+- allow 只能对应 0-24 分，并明确说明“未发现哪类违规”；
+- review 对应 25-79 分，必须指出具体待核对的问题类型和证据；
+- delete_candidate 对应 80-100 分，必须至少提供一条 high/critical 严重度的具体违规证据；
+- 不得仅以“需要人工复核”“存在风险”等空泛措辞作为理由；必须说明是敏感词、诈骗、联系方式、
+  外链引流、栏目错投、图片无法识别或其他哪一类问题，并引用可核对的原文/图片事实。
+
 规则引擎命中只是线索，不是最终结论；需要理解语境，避免把引用、讨论、科普误判为违规。
 “每周一问”必须同时具有每周提问语义和井号话题；“精华”应有明确精华话题或非常强的策展证据；
 “实用文章”通常有完整结构、案例/步骤/经验和较高信息量；“问答与交流”偏互动提问或讨论。
@@ -387,6 +394,9 @@ class AIReviewClient:
         )
         score = max(0, min(int(value["risk_score"]), 100))
         action = ModerationAction(str(value["recommended_action"]))
+        score, action, consistency_reason = _normalize_ai_decision(score, action, reasons)
+        if consistency_reason is not None:
+            reasons = reasons + (consistency_reason,)
         if vision_error:
             score = max(score, 25)
             action = ModerationAction.REVIEW
@@ -630,6 +640,80 @@ class AIReviewClient:
                     datetime.now(timezone.utc).isoformat(),
                 ),
             )
+
+
+def _normalize_ai_decision(
+    score: int,
+    action: ModerationAction,
+    reasons: Sequence[PolicyReason],
+) -> Tuple[int, ModerationAction, Optional[PolicyReason]]:
+    """Reject contradictory model scores/actions before they reach an administrator."""
+    severity_floor = {"low": 0, "medium": 25, "high": 60, "critical": 80}
+    supported_score = min(
+        100,
+        max(
+            sum(max(0, int(reason.score)) for reason in reasons),
+            max((severity_floor.get(str(reason.severity), 0) for reason in reasons), default=0),
+        ),
+    )
+    if action is ModerationAction.ALLOW and score >= 25:
+        if supported_score < 25:
+            return (
+                min(supported_score, 24),
+                ModerationAction.ALLOW,
+                PolicyReason(
+                    code="ai_score_normalized",
+                    category="review_quality",
+                    severity="low",
+                    message="模型风险分与低风险证据不一致，系统已按可核对证据校正分数",
+                    evidence=f"模型原始分 {score}；证据支持分 {supported_score}",
+                    score=0,
+                ),
+            )
+        return (
+            max(score, supported_score),
+            ModerationAction.REVIEW,
+            PolicyReason(
+                code="ai_action_normalized",
+                category="review_quality",
+                severity="medium",
+                message="模型给出风险证据却建议放行，系统已改为人工复核",
+                evidence=f"模型原始分 {score}；证据支持分 {supported_score}",
+                score=0,
+            ),
+        )
+    if action is ModerationAction.REVIEW and score < 25:
+        return 25, action, PolicyReason(
+            code="ai_score_normalized",
+            category="review_quality",
+            severity="medium",
+            message="模型建议人工复核，系统已将风险分校正到复核区间",
+            evidence=f"模型原始分 {score}",
+            score=0,
+        )
+    if action is ModerationAction.DELETE_CANDIDATE and supported_score < 60:
+        return (
+            max(25, min(max(score, supported_score), 79)),
+            ModerationAction.REVIEW,
+            PolicyReason(
+                code="ai_delete_evidence_insufficient",
+                category="review_quality",
+                severity="medium",
+                message="删除建议缺少高风险证据，系统已降级为人工复核",
+                evidence=f"模型原始分 {score}；证据支持分 {supported_score}",
+                score=0,
+            ),
+        )
+    if action is ModerationAction.DELETE_CANDIDATE and score < 80:
+        return 80, action, PolicyReason(
+            code="ai_score_normalized",
+            category="review_quality",
+            severity="high",
+            message="模型删除建议与风险分不一致，系统已按删除候选区间校正",
+            evidence=f"模型原始分 {score}；证据支持分 {supported_score}",
+            score=0,
+        )
+    return score, action, None
 
 
 def fuse_ai_review(

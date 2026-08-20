@@ -245,7 +245,7 @@ def create_app(
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
         suggestions, _ = placement_review(reviews, current)
         suggestion_by_id = {item["id"]: item for item in suggestions}
-        queue_counts = {"allow": 0, "placement": 0, "delete": 0, "incomplete": 0}
+        queue_counts = {"allow": 0, "placement": 0, "review": 0, "delete": 0, "incomplete": 0}
         for item in reviews:
             item["placement_suggestion"] = suggestion_by_id.get(item["id"])
             item["has_conflict"] = (
@@ -255,15 +255,19 @@ def create_app(
                 item.get("risk_level") == "low"
                 and item.get("action") == "delete_candidate"
             )
-            if current.ai_review.enabled and (
-                item.get("analysis_source") != "ai"
-                or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
-            ):
-                item["ui_queue"] = "incomplete"
+            if item["has_conflict"]:
+                item["ui_queue"] = "review"
             elif item.get("placement_suggestion"):
                 item["ui_queue"] = "placement"
             elif item.get("action") == "delete_candidate":
                 item["ui_queue"] = "delete"
+            elif current.ai_review.enabled and (
+                item.get("analysis_source") != "ai"
+                or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
+            ):
+                item["ui_queue"] = "incomplete"
+            elif item.get("action") == "review":
+                item["ui_queue"] = "review"
             else:
                 item["ui_queue"] = "allow"
             queue_counts[item["ui_queue"]] += 1
@@ -278,7 +282,7 @@ def create_app(
                 "",
             )
             if item["has_conflict"]:
-                item["ui_summary"] = "风险与建议不一致，必须人工复核"
+                item["ui_summary"] = "模型评分与处置建议矛盾，暂不删除"
             elif item["ui_queue"] == "incomplete":
                 item["ui_summary"] = item.get("ai_error") or "AI 未完整分析，请核对规则与原文"
             elif item["ui_queue"] == "placement":
@@ -288,11 +292,12 @@ def create_app(
                 item["ui_summary"] = summary_text or first_reason or "检测到高风险信号，建议删除"
             else:
                 item["ui_summary"] = summary_text or first_reason or "未发现明确风险，建议放行"
+            item["guidance"] = _review_guidance(item)
 
         selected_queue = request.args.get("queue", "")
         if selected_queue not in queue_counts:
             selected_queue = next(
-                (key for key in ("allow", "placement", "delete", "incomplete") if queue_counts[key]),
+                (key for key in ("review", "delete", "placement", "incomplete", "allow") if queue_counts[key]),
                 "allow",
             )
         visible_reviews = [item for item in reviews if item["ui_queue"] == selected_queue]
@@ -412,6 +417,23 @@ def create_app(
             item.get("risk_level") == "low"
             and item.get("action") == "delete_candidate"
         )
+        current = GuardConfig.from_file(str(resolved_config))
+        suggestions, _ = placement_review([item], current)
+        if suggestions:
+            item["placement_suggestion"] = suggestions[0]
+        if item["has_conflict"]:
+            item["ui_queue"] = "review"
+        elif item.get("placement_suggestion"):
+            item["ui_queue"] = "placement"
+        elif item.get("action") == "delete_candidate":
+            item["ui_queue"] = "delete"
+        elif current.ai_review.enabled and item.get("analysis_source") != "ai":
+            item["ui_queue"] = "incomplete"
+        elif item.get("action") == "review":
+            item["ui_queue"] = "review"
+        else:
+            item["ui_queue"] = "allow"
+        item["guidance"] = _review_guidance(item)
         return render_template("review_detail.html", item=item)
 
     @app.post("/reviews/<source>/<int:row_id>/resolve")
@@ -1123,6 +1145,98 @@ def _configured_move_targets(config: GuardConfig) -> list:
                     )
                     seen.add(key)
     return targets
+
+
+def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
+    reasons = [reason for reason in item.get("reasons", []) if isinstance(reason, dict)]
+    scored = [reason for reason in reasons if int(reason.get("score") or 0) > 0]
+    primary = next(
+        (reason for reason in reasons if reason.get("code") not in {"ai_score_normalized", "ai_action_normalized"}),
+        reasons[0] if reasons else {},
+    )
+    issue_type = _reason_type(primary)
+    message = str(primary.get("message") or "").strip()
+    evidence = str(primary.get("evidence") or "").strip()
+    score_parts = [
+        f"{_reason_type(reason)} +{int(reason.get('score') or 0)}"
+        for reason in scored[:3]
+    ]
+    score_detail = "、".join(score_parts) if score_parts else "现有理由没有提供可核对的风险加分项"
+
+    if item.get("has_conflict"):
+        return {
+            "action": "暂不处置，建议重新分析",
+            "issue": "模型结论自相矛盾",
+            "why": f"模型给出 {int(item.get('risk_score') or 0)} 分，却建议{ACTION_LABELS.get(item.get('action'), item.get('action'))}；不能据此删除。",
+            "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
+            "score": score_detail,
+        }
+    suggestion = item.get("placement_suggestion")
+    if suggestion:
+        target = suggestion["move_target"]["label"]
+        classification_reasons = list((item.get("classification") or {}).get("reasons") or [])
+        return {
+            "action": f"建议调整栏目到“{target}”",
+            "issue": "栏目错投",
+            "why": suggestion.get("placement_reason") or message or "内容语义与当前栏目定位不一致",
+            "evidence": evidence or str(classification_reasons[0] if classification_reasons else "AI 分类结果与当前栏目不同"),
+            "score": "栏目调整与违规删除分开判断；错投本身不等于违禁内容",
+        }
+    if item.get("ui_queue") == "incomplete":
+        return {
+            "action": "建议查看原文/图片后重新巡检",
+            "issue": "AI 分析未完成",
+            "why": str(item.get("ai_error") or message or "当前只有规则初审结果，系统不会自动处置"),
+            "evidence": evidence or "暂无完整的 Hy3 与 VITA 联合证据",
+            "score": score_detail,
+        }
+    if item.get("action") == "delete_candidate":
+        return {
+            "action": "建议删除（仍需管理员二次确认）",
+            "issue": issue_type,
+            "why": message or "检测到高风险违规信号",
+            "evidence": evidence or "请打开完整详情核对原文证据",
+            "score": score_detail,
+        }
+    if item.get("action") == "review":
+        return {
+            "action": "建议人工核对后再决定",
+            "issue": issue_type,
+            "why": message or "存在需要管理员确认的具体信号",
+            "evidence": evidence or "请打开完整详情核对原文或图片",
+            "score": score_detail,
+        }
+    return {
+        "action": "建议保留",
+        "issue": "未发现明确违规",
+        "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与 AI 均未发现需要处置的问题"),
+        "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
+        "score": score_detail,
+    }
+
+
+def _reason_type(reason: Dict[str, Any]) -> str:
+    code = str(reason.get("code") or "").casefold()
+    category = str(reason.get("category") or "").casefold()
+    value = f"{code} {category}"
+    mappings = (
+        (("sensitive_term", "敏感词", "违禁词"), "敏感词/违禁词"),
+        (("spam", "灌水", "垃圾"), "垃圾灌水"),
+        (("scam", "诈骗"), "诈骗风险"),
+        (("porn", "色情"), "色情内容"),
+        (("gambl", "赌博"), "赌博内容"),
+        (("contact", "privacy", "联系方式", "隐私"), "联系方式/隐私"),
+        (("external_link", "traffic", "引流", "外链"), "外链/引流"),
+        (("section", "hashtag", "栏目", "话题"), "栏目规则"),
+        (("duplicate", "重复"), "连续重复"),
+        (("vision", "图片"), "图片识别"),
+        (("confidence", "置信度"), "分类置信度"),
+        (("conflict", "不一致"), "结论冲突"),
+    )
+    for needles, label in mappings:
+        if any(needle in value for needle in needles):
+            return label
+    return str(reason.get("category") or "其他待核对问题")
 
 
 def _find_move_target(config: GuardConfig, key: str):

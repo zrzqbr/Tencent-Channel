@@ -155,6 +155,32 @@ class AIReviewTests(unittest.TestCase):
         self.assertEqual(decision.status, "completed")
         self.assertEqual(decision.section, Section.PRACTICAL_ARTICLE)
 
+    def test_high_score_allow_with_only_low_risk_evidence_is_normalized(self):
+        client = AIReviewClient(self.settings, self.database_path, api_key="test-key")
+        value = {
+            "section": "practical_article",
+            "classification_confidence": 0.98,
+            "risk_level": "critical",
+            "risk_score": 95,
+            "recommended_action": "allow",
+            "summary": "正常教程文章",
+            "reasons": [{
+                "code": "section_match",
+                "category": "practical_article",
+                "severity": "low",
+                "message": "内容与栏目一致",
+                "evidence": "包含完整步骤",
+                "score": 1,
+            }],
+        }
+
+        decision = client._decision(value, "completed")
+
+        self.assertEqual(decision.recommended_action, ModerationAction.ALLOW)
+        self.assertEqual(decision.risk_level, RiskLevel.LOW)
+        self.assertEqual(decision.risk_score, 1)
+        self.assertIn("ai_score_normalized", [reason.code for reason in decision.reasons])
+
 
 if __name__ == "__main__":
     unittest.main()

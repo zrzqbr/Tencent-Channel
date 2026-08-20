@@ -32,10 +32,11 @@
     <div class="queue-tabs" role="tablist" aria-label="审核建议分类">
       <a class="{{ 'active' if selected_queue == 'allow' }}" href="{{ url_for('dashboard', queue='allow') }}">建议放行 <b>{{ queue_counts.allow }}</b></a>
       <a class="{{ 'active' if selected_queue == 'placement' }}" href="{{ url_for('dashboard', queue='placement') }}">建议调整栏目 <b>{{ queue_counts.placement }}</b></a>
+      <a class="{{ 'active' if selected_queue == 'review' }}" href="{{ url_for('dashboard', queue='review') }}">需人工核对 <b>{{ queue_counts.review }}</b></a>
       <a class="{{ 'active' if selected_queue == 'delete' }}" href="{{ url_for('dashboard', queue='delete') }}">建议删除 <b>{{ queue_counts.delete }}</b></a>
       <a class="{{ 'active' if selected_queue == 'incomplete' }}" href="{{ url_for('dashboard', queue='incomplete') }}">AI 未完整分析 <b>{{ queue_counts.incomplete }}</b></a>
     </div>
-    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>AI 一句话结论</span><span>风险级别</span><span>建议目标</span><span>操作</span></div>
+    <div class="queue-header" aria-hidden="true"><span>内容</span><span>作者 / 来源栏目</span><span>明确处理建议</span><span>风险级别</span><span>问题类型</span><span>操作</span></div>
     <div class="queue-list">
       {% for item in reviews %}{% set item_key = item.source ~ '-' ~ item.id %}
       <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}">
@@ -43,7 +44,7 @@
         <div><strong>{{ item.author_id|truncate(18, True, '') or '未知作者' }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }}</small></div>
         <div><strong class="queue-summary">{{ item.ui_summary|truncate(45) }}</strong>{% if item.has_conflict %}<small class="consistency-inline"><i class="ri-error-warning-line" aria-hidden="true"></i>结论冲突</small>{% else %}<small>{{ 'Hy3 + VITA' if item.analysis_source == 'ai' else '规则初审' }}</small>{% endif %}</div>
         <div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 {{ item.risk_score }}</span></div>
-        <div><strong>{{ item.placement_suggestion.move_target.label if item.placement_suggestion else section_labels.get(item.section, item.section) }}</strong><small>{{ action_labels.get(item.action, item.action) }}</small></div>
+        <div><strong>{{ item.guidance.issue }}</strong><small>{{ item.placement_suggestion.move_target.label if item.placement_suggestion else action_labels.get(item.action, item.action) }}</small></div>
         <div><a class="row-review-button" href="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}#review-detail">审核</a></div>
       </article>
       {% else %}<div class="queue-empty"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><strong>这一类任务已经处理完了</strong><p>可以切换上方标签继续处理其他内容。</p></div>{% endfor %}
@@ -55,8 +56,8 @@
     {% if selected_item %}
     <div class="drawer-title"><div><span>内容详情</span><h2>{{ selected_item.title or '无标题内容' }}</h2></div><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">完整详情</a></div>
     <section class="original-preview"><span class="preview-label">原帖预览</span><p>{{ selected_item.body|striptags|truncate(210) or '本条记录暂未保存正文，可在完整详情中查看内容编号与检测证据。' }}</p><dl><div><dt>作者</dt><dd>{{ selected_item.author_id or '未返回' }}</dd></div><div><dt>来源栏目</dt><dd>{{ section_labels.get(selected_item.section, selected_item.section) }}</dd></div><div><dt>频道</dt><dd>{{ selected_item.guild_name or selected_item.guild_id }}</dd></div></dl></section>
-    <section class="ai-decision"><div><span>AI 判断</span><strong>{{ selected_item.ui_summary }}</strong></div><div><span>风险等级</span><strong class="risk-text-{{ selected_item.risk_level }}">{{ risk_labels.get(selected_item.risk_level, selected_item.risk_level) }}风险 {{ selected_item.risk_score }}</strong></div></section>
-    <section class="evidence-block"><div class="section-heading"><strong>判断依据</strong><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">查看完整分析</a></div><ol>{% for reason in selected_item.reasons[:3] %}<li>{{ reason.message }}{% if reason.evidence %}：{{ reason.evidence|truncate(70) }}{% endif %}</li>{% else %}<li>{{ selected_item.ai_analysis.get('summary') or '未发现明确规则风险，仍需管理员结合原文确认。' }}</li>{% endfor %}</ol></section>
+    <section class="recommendation-card"><div class="recommendation-head"><span>系统给你的处理建议</span><span class="risk-pill risk-{{ selected_item.risk_level }}">{{ risk_labels.get(selected_item.risk_level, selected_item.risk_level) }}风险 {{ selected_item.risk_score }}</span></div><h3>{{ selected_item.guidance.action }}</h3><dl><div><dt>问题类型</dt><dd>{{ selected_item.guidance.issue }}</dd></div><div><dt>为什么</dt><dd>{{ selected_item.guidance.why }}</dd></div><div><dt>命中证据</dt><dd>{{ selected_item.guidance.evidence }}</dd></div><div><dt>分数怎么来的</dt><dd>{{ selected_item.guidance.score }}</dd></div></dl></section>
+    <section class="evidence-block"><div class="section-heading"><strong>全部判断依据</strong><a href="{{ url_for('review_detail', source=selected_item.source, row_id=selected_item.id) }}">查看完整分析</a></div><ol>{% for reason in selected_item.reasons[:3] %}<li><b>{{ reason.category or reason.code }}</b>：{{ reason.message }}{% if reason.evidence %}<br>证据：{{ reason.evidence|truncate(90) }}{% endif %}{% if reason.score %}<em>风险贡献 +{{ reason.score }}</em>{% endif %}</li>{% else %}<li>未命中敏感词、违禁推广、联系方式泄露或栏目硬规则。</li>{% endfor %}</ol></section>
     {% if selected_item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>结论与风险不一致，请人工复核</strong><small>系统已锁定自动放行，必须由管理员确认。</small></span></div>{% endif %}
     {% if selected_item.analysis_source != 'ai' and ai_status.status == 'ready' %}<div class="consistency-warning"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>本条 AI 分析未完整执行</strong><small>{{ selected_item.ai_error or '当前记录只有规则结论，不会自动执行普通内容处置。' }}</small></span></div>{% endif %}
     <section class="drawer-actions"><h3>处理动作</h3>

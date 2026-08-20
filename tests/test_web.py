@@ -184,9 +184,23 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertIn("建议放行".encode("utf-8"), response.data)
         self.assertIn("建议调整栏目".encode("utf-8"), response.data)
+        self.assertIn("需人工核对".encode("utf-8"), response.data)
         self.assertIn("建议删除".encode("utf-8"), response.data)
         self.assertIn("AI 未完整分析".encode("utf-8"), response.data)
-        self.assertIn("判断依据".encode("utf-8"), response.data)
+        self.assertIn("明确处理建议".encode("utf-8"), response.data)
+        self.assertIn("问题类型".encode("utf-8"), response.data)
+        self.assertIn("分数怎么来的".encode("utf-8"), response.data)
+
+    def test_review_detail_explains_sensitive_term_and_score(self):
+        row_id = self.insert_tencent_review()
+        self.login()
+
+        response = self.client.get(f"/reviews/tencent/{row_id}")
+
+        self.assertIn("建议删除（仍需管理员二次确认）".encode("utf-8"), response.data)
+        self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
+        self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
+        self.assertIn("风险贡献 +80".encode("utf-8"), response.data)
 
     def test_conflicting_high_risk_allow_requires_explicit_confirmation(self):
         row_id = self.insert_tencent_review(title="风险与建议冲突")
