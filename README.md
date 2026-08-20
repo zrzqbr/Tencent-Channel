@@ -2,6 +2,8 @@
 
 统一代码仓库：[zrzqbr/Tencent-Channel](https://github.com/zrzqbr/Tencent-Channel)
 
+下一位开发者或 AI 请先阅读 [开发与生产交接文档](HANDOFF.md)，其中包含当前进度、GitHub 提交方式、服务器发布与回滚、授权注意事项和待优化清单。
+
 这是一个可运行的 MVP，面向一个或多个 QQ 内置频道的论坛帖子和文字子频道消息。它完成两件事：
 
 1. 将内容检测为“精华、每周一问、实用文章、问答与交流、官方资讯”之一。
