@@ -72,6 +72,31 @@ class TencentCliClientTests(unittest.TestCase):
         with patch("qq_guard.tencent_cli.subprocess.run", return_value=completed):
             self.assertEqual(client.capability_index()[0]["domain"], "feed")
 
+    def test_incremental_listing_stops_when_first_page_reaches_watermark(self):
+        completed = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "success": True,
+                    "data": {
+                        "feeds": [{"feed_id": "new"}, {"feed_id": "known"}],
+                        "feed_attach_info": "unused-page-2",
+                        "has_more": True,
+                    },
+                }
+            ),
+            stderr="",
+        )
+        with patch("qq_guard.tencent_cli.shutil.which", return_value="/usr/bin/tencent-channel-cli"):
+            client = TencentCliClient(min_interval_seconds=0)
+        with patch("qq_guard.tencent_cli.subprocess.run", return_value=completed) as run:
+            feeds = client.list_channel_feeds_incremental(
+                "123", "456", count=20, known_feed_ids=["known"]
+            )
+        self.assertEqual([item["feed_id"] for item in feeds], ["new", "known"])
+        self.assertEqual(run.call_count, 1)
+
 
 if __name__ == "__main__":
     unittest.main()

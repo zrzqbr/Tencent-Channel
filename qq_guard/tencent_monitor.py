@@ -342,16 +342,36 @@ class TencentChannelMonitor:
     def _list_feeds(
         self, settings: TencentChannelSettings, channel_id: str
     ) -> List[Dict[str, Any]]:
-        feeds = self.api.list_channel_feeds(
-            settings.guild_id,
-            channel_id,
-            settings.scan_count,
-        )
+        incremental = getattr(self.api, "list_channel_feeds_incremental", None)
+        if callable(incremental):
+            feeds = incremental(
+                settings.guild_id,
+                channel_id,
+                settings.scan_count,
+                self._known_feed_ids(settings.guild_id, channel_id),
+            )
+        else:
+            feeds = self.api.list_channel_feeds(
+                settings.guild_id,
+                channel_id,
+                settings.scan_count,
+            )
         return sorted(
             feeds,
             key=lambda feed: int(feed.get("create_time_raw") or 0),
             reverse=True,
         )
+
+    def _known_feed_ids(self, guild_id: str, channel_id: str) -> Tuple[str, ...]:
+        with sqlite3.connect(str(self.database_path)) as connection:
+            rows = connection.execute(
+                """
+                SELECT feed_id FROM tencent_feed_cache
+                WHERE guild_id = ? AND channel_id = ?
+                """,
+                (guild_id, channel_id),
+            ).fetchall()
+        return tuple(str(row[0]) for row in rows)
 
     def _detail(
         self,

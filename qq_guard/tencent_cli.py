@@ -90,6 +90,63 @@ class TencentCliClient:
             cursor = next_cursor
         return feeds
 
+    def list_channel_feeds_incremental(
+        self,
+        guild_id: str,
+        channel_id: str,
+        count: int = 20,
+        known_feed_ids: Optional[Sequence[str]] = None,
+    ) -> List[Dict[str, Any]]:
+        """Read new timeline pages until the persisted watermark is encountered."""
+        target_count = max(2, min(int(count), 100))
+        safe_guild = self._digits(guild_id, "guild_id")
+        safe_channel = self._digits(channel_id, "channel_id")
+        known = {str(value) for value in (known_feed_ids or ()) if str(value)}
+        feeds: List[Dict[str, Any]] = []
+        seen_ids = set()
+        seen_cursors = set()
+        cursor = ""
+        while len(feeds) < target_count:
+            arguments = [
+                "feed",
+                "get-channel-timeline-feeds",
+                "--guild-id",
+                safe_guild,
+                "--channel-id",
+                safe_channel,
+                "--count",
+                str(target_count - len(feeds)),
+            ]
+            if cursor:
+                arguments.extend(["--feed-attach-info", cursor])
+            arguments.append("--json")
+            payload = self._run(arguments, retries=5)
+            data = payload.get("data") or {}
+            page = list(data.get("feeds") or [])
+            page_reached_watermark = False
+            for feed in page:
+                feed_id = str(feed.get("feed_id") or "")
+                if feed_id and feed_id in seen_ids:
+                    continue
+                if feed_id:
+                    seen_ids.add(feed_id)
+                    if feed_id in known:
+                        page_reached_watermark = True
+                feeds.append(dict(feed))
+                if len(feeds) >= target_count:
+                    break
+            next_cursor = str(data.get("feed_attach_info") or "")
+            if (
+                page_reached_watermark
+                or not data.get("has_more")
+                or not next_cursor
+                or next_cursor in seen_cursors
+            ):
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return feeds
+
     def version(self) -> str:
         payload = self._run(["version", "--json"])
         return str((payload.get("data") or {}).get("version") or "")
