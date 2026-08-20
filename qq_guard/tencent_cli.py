@@ -40,6 +40,7 @@ class TencentCliClient:
         if resolved_home:
             self.environment["HOME"] = resolved_home
         self._last_call = 0.0
+        self._last_rate_limit_retry = 0.0
         self._lock = threading.Lock()
 
     def list_channel_feeds(self, guild_id: str, channel_id: str, count: int = 20) -> List[Dict[str, Any]]:
@@ -323,8 +324,17 @@ class TencentCliClient:
             error = payload.get("error") if isinstance(payload, dict) else {}
             message = error.get("message") if isinstance(error, dict) else str(error)
             message = message or "腾讯频道 CLI 调用失败"
-            if self._is_rate_limit(message) and attempt < retries and not rate_limit_retried:
+            retry_cooldown_elapsed = (
+                time.monotonic() - self._last_rate_limit_retry >= 300.0
+            )
+            if (
+                self._is_rate_limit(message)
+                and attempt < retries
+                and not rate_limit_retried
+                and retry_cooldown_elapsed
+            ):
                 rate_limit_retried = True
+                self._last_rate_limit_retry = time.monotonic()
                 time.sleep(self.rate_limit_retry_seconds)
                 continue
             raise TencentCliError(message)

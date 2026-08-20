@@ -321,18 +321,34 @@ class TencentChannelMonitor:
 
     def run_forever(self) -> None:
         while True:
-            with ScanLock(self.database_path) as acquired:
-                if acquired:
-                    report = self.scan_once()
-                    print(json.dumps(report.public_summary(), ensure_ascii=False), flush=True)
-                else:
-                    print(
-                        json.dumps(
-                            {"status": "skipped", "reason": "scan_already_running"},
-                            ensure_ascii=False,
-                        ),
-                        flush=True,
-                    )
+            try:
+                with ScanLock(self.database_path) as acquired:
+                    if acquired:
+                        report = self.scan_once()
+                        print(json.dumps(report.public_summary(), ensure_ascii=False), flush=True)
+                    else:
+                        print(
+                            json.dumps(
+                                {"status": "skipped", "reason": "scan_already_running"},
+                                ensure_ascii=False,
+                            ),
+                            flush=True,
+                        )
+            except Exception as exc:
+                print(
+                    json.dumps(
+                        {
+                            "status": "failed",
+                            "reason": "scan_error",
+                            "error": str(exc)[:500],
+                            "retry_after_seconds": min(
+                                settings.poll_interval_seconds for settings in self.settings
+                            ),
+                        },
+                        ensure_ascii=False,
+                    ),
+                    flush=True,
+                )
             time.sleep(min(settings.poll_interval_seconds for settings in self.settings))
 
     def _progress(self, percent: int, phase: str, message: str) -> None:
