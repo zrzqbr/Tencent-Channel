@@ -128,7 +128,7 @@ def normalize_index(index: Iterable[Mapping[str, Any]]) -> List[Dict[str, Any]]:
                     "domain": domain,
                     "action": action,
                     "path": f"{domain}.{action}",
-                    "title": str(command.get("short") or action),
+                    "title": str(command.get("short") or action).replace("版块", "栏目"),
                     "group": str(command.get("group") or ""),
                     "risk": risk,
                     "is_write": risk != "read",

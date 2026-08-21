@@ -43,7 +43,7 @@ class FakeTencentClient:
                     },
                     {
                         "use": "move-feed",
-                        "short": "移动帖子",
+                        "short": "移动帖子到其他版块",
                         "group": "write",
                         "risk": "write",
                     },
@@ -288,6 +288,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("选择要完成的工作".encode("utf-8"), response.data)
         self.assertIn("查清楚".encode("utf-8"), response.data)
         self.assertIn("处理风险".encode("utf-8"), response.data)
+        self.assertIn("移动帖子到其他栏目".encode("utf-8"), response.data)
+        self.assertNotIn("移动帖子到其他版块".encode("utf-8"), response.data)
         self.assertIn("当前只允许查看和检查填写内容".encode("utf-8"), response.data)
         self.assertIn(b'<details class="capability-catalog">', response.data)
         self.assertNotIn(b'<details class="capability-catalog" open>', response.data)
