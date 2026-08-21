@@ -150,22 +150,6 @@ document.querySelectorAll('[data-confirm-action-form]').forEach((form) => {
   });
 });
 
-document.querySelectorAll('[data-official-form]').forEach((form) => {
-  const confirmation = form.querySelector('[data-live-confirmation]');
-  const modes = Array.from(form.querySelectorAll('input[name="execution_mode"]'));
-  if (!confirmation || !modes.length) return;
-  const update = () => {
-    const live = modes.some((item) => item.checked && item.value === 'live');
-    confirmation.hidden = !live;
-    confirmation.querySelectorAll('input').forEach((input) => {
-      if (['reason', 'password', 'confirmation'].includes(input.name)) input.required = live;
-      if (input.name === 'confirmation_phrase') input.required = live;
-    });
-  };
-  modes.forEach((item) => item.addEventListener('change', update));
-  update();
-});
-
 document.querySelectorAll('[data-board-policy-form]').forEach((form) => {
   const select = form.querySelector('[data-board-policy-select]');
   if (!select) return;

@@ -6,14 +6,14 @@
 {% block content %}
 <section class="info-banner {{ 'warning-banner' if capability.is_write }}">
   <strong>{{ '可能删帖或影响成员' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只查看频道数据' }}</strong>
-  <p>{% if capability.is_write %}先使用“检查填写内容”，确认目标和内容无误后再选择真实执行。真实执行会要求密码、原因和确认。{% else %}选择要查看的对象后直接查询，登录信息等敏感字段不会显示。{% endif %}</p>
+  <p>{% if capability.is_write %}提交后会直接同步到腾讯频道，并自动记录操作结果。{% else %}选择要查看的对象后直接查询，登录信息等敏感字段不会显示。{% endif %}</p>
 </section>
 <section class="info-banner"><strong>已有数据可以直接选择</strong><p>频道、栏目、帖子和作者会优先显示为下拉选项；评论或回复尚未同步时可以手动填写。</p></section>
 {% if capability.note %}<details class="operation-note"><summary>查看这项操作的使用条件</summary><p>{{ capability.note }}</p></details>{% endif %}
 {% if error %}<div class="flash error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ error }}</div>{% endif %}
 <section class="panel">
   <div class="panel-title"><div><h2>填写信息</h2><p>带“必填”的项目必须填写；不需要的项目留空。</p></div><span class="risk-pill {{ 'risk-high' if capability.is_high_risk else 'risk-medium' if capability.is_write else 'risk-low' }}">{{ '高风险' if capability.is_high_risk else '会修改' if capability.is_write else '只读取' }}</span></div>
-  <form method="post" class="stack-form official-form" data-official-form>
+  <form method="post" class="stack-form official-form">
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="official-fields">
     {% for field in form_fields %}
@@ -26,19 +26,7 @@
     {% endfor %}
     </div>
     <details class="advanced-parameters"><summary>其他填写项（通常不用）</summary><p>仅供维护人员处理特殊操作，日常管理请保持为空。</p><textarea name="advanced_json" rows="5" aria-label="特殊操作补充数据"></textarea></details>
-    {% if capability.is_write %}
-    <fieldset class="execution-box"><legend>执行方式</legend>
-      <label class="radio-option"><input type="radio" name="execution_mode" value="preview" checked><span><strong>检查填写内容</strong><small>不会修改腾讯频道</small></span></label>
-      <label class="radio-option"><input type="radio" name="execution_mode" value="live" {{ 'disabled' if not writes_enabled }}><span><strong>确认并执行</strong><small>{{ '需要密码、原因和确认' if writes_enabled else '服务器暂未开启真实修改' }}</small></span></label>
-    </fieldset>
-    <section class="live-confirmation" data-live-confirmation hidden>
-      <label>操作原因<input name="reason" maxlength="300" placeholder="至少填写 4 个字"></label>
-      <label>管理员密码<input name="password" type="password" autocomplete="current-password"></label>
-      <label class="confirm-check"><input type="checkbox" name="confirmation" value="confirmed"><span>我已核对目标对象，理解这一步会修改真实腾讯频道。</span></label>
-      {% if capability.is_high_risk %}<label>高风险确认文字<input name="confirmation_phrase" placeholder="请输入：确认执行" autocomplete="off"></label>{% endif %}
-    </section>
-    {% endif %}
-    <button class="{{ 'danger-button' if capability.is_high_risk else 'primary-button' }}" type="submit">{{ '继续' if capability.is_write else '查看结果' }}</button>
+    <button class="{{ 'danger-button' if capability.is_high_risk else 'primary-button' }}" type="submit" {{ 'disabled' if capability.is_write and not writes_enabled }}>{{ '立即执行' if capability.is_write else '查看结果' }}</button>
   </form>
 </section>
 {% if result is not none %}

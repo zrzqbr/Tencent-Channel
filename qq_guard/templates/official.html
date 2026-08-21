@@ -5,7 +5,7 @@
 {% block content %}
 <section class="official-hero">
   <div><span class="mode-badge"><i></i>已连接腾讯频道</span><h2>选择要完成的工作</h2><p>这里直接使用腾讯频道提供的读取和管理能力。频道、栏目、帖子和作者会从后台现有数据中选择，不需要手工查编号。</p></div>
-  <dl><div><dt>连接状态</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实修改</dt><dd>{{ '已开启，执行前仍会确认' if writes_enabled else '当前只允许查看和检查填写内容' }}</dd></div></dl>
+  <dl><div><dt>连接状态</dt><dd class="{{ 'status-ok' if cli_status.connected else 'status-error' }}">{{ cli_status.login }}</dd></div><div><dt>真实修改</dt><dd>{{ '已开启，提交后直接生效' if writes_enabled else '当前只允许查看频道数据' }}</dd></div></dl>
 </section>
 {% if cli_status.error %}<div class="info-banner warning-banner"><strong>能力读取不完整</strong><p>{{ cli_status.error }}</p></div>{% endif %}
 <section class="sync-summary"><span><strong>{{ official_sources.guilds }}</strong> 个频道</span><span><strong>{{ official_sources.channels }}</strong> 个栏目</span><span><strong>{{ official_sources.feeds }}</strong> 条帖子</span><span><strong>{{ official_sources.authors }}</strong> 位作者</span></section>
@@ -18,7 +18,7 @@
   </article>
   {% endfor %}
 </section>
-<section class="info-banner"><strong>每次修改都由你确认</strong><p>查看资料会直接返回结果；发布、修改、删除等操作会先检查填写内容。真实执行前还会核对原因和管理员密码，并自动进入操作记录。</p></section>
+<section class="info-banner"><strong>操作直接生效并自动留痕</strong><p>查看资料会直接返回结果；发布、修改、删除等操作提交后直接同步到腾讯频道，并自动进入操作记录。</p></section>
 {% if groups %}<details class="capability-catalog"><summary><span><strong>更多频道管理操作</strong><small>常用工作中没有时再到这里查找，共 {{ capability_count }} 项</small></span><i class="ri-arrow-down-s-line" aria-hidden="true"></i></summary><div class="capability-catalog-body">
   {% for group in groups %}<section class="catalog-group"><div class="panel-title"><div><h2>{{ group.label }}</h2><p>{{ group['items']|length }} 项</p></div></div><div class="capability-grid">
     {% for item in group['items'] %}<a class="capability-card {{ 'high-risk' if item.is_high_risk else 'write' if item.is_write else 'read' }}" href="{{ url_for('official_capability', domain=item.domain, action=item.action) }}"><span class="capability-risk">{{ '高影响操作' if item.is_high_risk else '会修改频道' if item.is_write else '只查看' }}</span><strong>{{ item.title }}</strong></a>{% endfor %}

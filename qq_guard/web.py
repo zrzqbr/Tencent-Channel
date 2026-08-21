@@ -292,6 +292,137 @@ def create_app(
             move_targets=_configured_move_targets(current),
         )
 
+    @app.get("/contents")
+    @login_required
+    def contents():
+        guild_id = request.args.get("guild", "")
+        channel_id = request.args.get("channel", "")
+        query = request.args.get("q", "").strip()[:200]
+        current = GuardConfig.from_file(str(resolved_config))
+        items = store.contents(
+            guild_id=guild_id,
+            channel_id=channel_id,
+            query=query,
+            limit=1000,
+        )
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        page_size = 20
+        total_pages = max(1, (len(items) + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        channels = sorted(
+            {
+                (item["channel_id"], item["channel_name"])
+                for item in store.contents(guild_id=guild_id, limit=1000)
+            },
+            key=lambda value: value[1],
+        )
+        return render_template(
+            "contents.html",
+            items=items[(page - 1) * page_size : page * page_size],
+            total_items=len(items),
+            page=page,
+            total_pages=total_pages,
+            selected_guild=guild_id,
+            selected_channel=channel_id,
+            query=query,
+            channels=channels,
+            move_targets=_configured_move_targets(current),
+        )
+
+    @app.post("/contents/<guild_id>/<feed_id>/edit")
+    @login_required
+    def edit_content(guild_id: str, feed_id: str):
+        title = request.form.get("title", "").strip()[:500]
+        body = request.form.get("body", "").strip()[:50000]
+        try:
+            item = store.get_content(guild_id, feed_id)
+            if item.get("deleted_at"):
+                raise ValueError("这条内容已经删除")
+            if not title and not body:
+                raise ValueError("标题和正文不能同时为空")
+            client = cli_factory()
+            client.alter_feed(
+                item["guild_id"],
+                item["channel_id"],
+                item["feed_id"],
+                item["create_time_raw"],
+                item["feed_type"],
+                title,
+                body,
+                markdown=item["is_markdown"],
+            )
+            store.record_content_edit(
+                guild_id,
+                feed_id,
+                title,
+                body,
+                "admin",
+                remote_ip(),
+            )
+        except (TencentCliError, ValueError, OSError, AttributeError) as exc:
+            flash(_public_operation_error(exc), "error")
+        else:
+            flash("帖子已修改，并同步到腾讯频道。", "success")
+        return redirect(url_for("contents", guild=guild_id))
+
+    @app.post("/contents/<guild_id>/<feed_id>/delete")
+    @login_required
+    def delete_content(guild_id: str, feed_id: str):
+        if not manual_delete_enabled():
+            flash("服务器尚未启用人工删除能力。", "error")
+            return redirect(url_for("contents", guild=guild_id))
+        try:
+            item = store.get_content(guild_id, feed_id)
+            if item.get("deleted_at"):
+                raise ValueError("这条内容已经删除")
+            cli_factory().delete_feed(
+                item["guild_id"],
+                item["channel_id"],
+                item["feed_id"],
+                item["create_time_raw"],
+                True,
+            )
+        except (TencentCliError, ValueError, OSError, AttributeError) as exc:
+            store.record_content_delete(guild_id, feed_id, "admin", str(exc)[:500], remote_ip())
+            flash(_public_operation_error(exc), "error")
+        else:
+            store.record_content_delete(guild_id, feed_id, "admin", remote_ip=remote_ip())
+            flash("帖子已从腾讯频道删除。", "success")
+        return redirect(url_for("contents", guild=guild_id))
+
+    @app.post("/contents/<guild_id>/<feed_id>/move")
+    @login_required
+    def move_content(guild_id: str, feed_id: str):
+        current = GuardConfig.from_file(str(resolved_config))
+        target = _find_move_target(current, request.form.get("move_target", ""))
+        try:
+            item = store.get_content(guild_id, feed_id)
+            if target is None or target["guild_id"] != guild_id:
+                raise ValueError("请选择当前频道内的目标栏目")
+            cli_factory().move_feed(
+                guild_id,
+                item["channel_id"],
+                target["channel_id"],
+                feed_id,
+            )
+            store.record_content_move(
+                guild_id,
+                feed_id,
+                target["channel_id"],
+                target["label"],
+                target["section"],
+                "admin",
+                remote_ip(),
+            )
+        except (TencentCliError, ValueError, OSError, AttributeError) as exc:
+            flash(_public_operation_error(exc), "error")
+        else:
+            flash(f"帖子已移动到“{target['label']}”。", "success")
+        return redirect(url_for("contents", guild=guild_id))
+
     @app.get("/reviews")
     @login_required
     def reviews():
@@ -396,20 +527,6 @@ def create_app(
         resolution = request.form.get("resolution", "")
         notes = request.form.get("notes", "").strip()[:1000]
         try:
-            item = store.get_review(source, row_id)
-            has_conflict = (
-                item.get("risk_level") in {"high", "critical"}
-                and item.get("action") == "allow"
-            ) or (
-                item.get("risk_level") == "low"
-                and item.get("action") == "delete_candidate"
-            )
-            if (
-                resolution == "approved"
-                and has_conflict
-                and request.form.get("conflict_confirmation") != "confirmed"
-            ):
-                raise ValueError("风险等级与建议动作不一致，请在详情页明确确认后再保留")
             store.resolve_review(source, row_id, resolution, "admin", notes, remote_ip())
         except ValueError as exc:
             flash(str(exc), "error")
@@ -420,156 +537,58 @@ def create_app(
     @app.post("/reviews/tencent/<int:row_id>/prepare-delete")
     @login_required
     def prepare_delete(row_id: int):
-        if not manual_delete_enabled():
-            flash("服务器尚未启用人工删除能力。", "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        try:
-            token = store.create_delete_challenge(row_id, "admin", remote_ip())
-        except ValueError as exc:
-            flash(str(exc), "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        session["delete_challenge"] = {"row_id": row_id, "token": token}
-        return redirect(url_for("confirm_delete", row_id=row_id))
+        return execute_delete(row_id)
 
     @app.get("/reviews/tencent/<int:row_id>/confirm-delete")
     @login_required
     def confirm_delete(row_id: int):
-        challenge = session.get("delete_challenge") or {}
-        if int(challenge.get("row_id") or 0) != row_id:
-            flash("删除确认已失效，请重新发起。", "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        try:
-            item = store.get_review("tencent", row_id)
-        except ValueError:
-            abort(404)
-        return render_template("confirm_delete.html", item=item)
+        return redirect(url_for("review_detail", source="tencent", row_id=row_id))
 
     @app.post("/reviews/tencent/<int:row_id>/delete")
     @login_required
     def execute_delete(row_id: int):
-        challenge = session.get("delete_challenge", {}) or {}
-        password = request.form.get("password", "")
-        confirmation = request.form.get("confirmation", "").strip()
-        reason = request.form.get("reason", "").strip()[:1000]
+        reason = "管理员在内容审核页直接删除"
         if not manual_delete_enabled():
             flash("服务器尚未启用人工删除能力。", "error")
             return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        if not check_password_hash(password_hash, password):
-            store.record_audit("admin", "delete.reauth_failed", "tencent", str(row_id), {}, remote_ip())
-            flash("管理员密码验证失败，未执行删除。", "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        if confirmation != "confirmed" or len(reason) < 4:
-            flash("请勾选删除确认，并填写至少 4 个字符的删除理由。", "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
-        session.pop("delete_challenge", None)
         try:
-            if int(challenge.get("row_id") or 0) != row_id:
-                raise ValueError("删除确认已失效，请重新发起")
-            store.consume_delete_challenge(row_id, "admin", str(challenge.get("token") or ""))
+            store.ensure_current_tencent_review(row_id)
             item = store.get_review("tencent", row_id)
             client = cli_factory()
             _delete_tencent_item(client, item)
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"[:500]
             store.record_delete_result(row_id, "admin", "failed", message, reason, remote_ip())
-            flash(f"删除失败：{exc}", "error")
+            flash(_public_operation_error(exc), "error")
         else:
             store.record_delete_result(row_id, "admin", "deleted", "", reason, remote_ip())
-            flash("内容已删除，平台结果和删除理由均已记录。", "success")
+            flash("内容已从腾讯频道删除。", "success")
         return redirect(url_for("review_detail", source="tencent", row_id=row_id))
 
     @app.post("/reviews/bulk-delete/prepare")
     @login_required
     def prepare_bulk_delete():
-        if not manual_delete_enabled():
-            flash("服务器尚未启用人工删除能力。", "error")
-            return redirect(url_for("reviews"))
-        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
-        if not row_ids:
-            flash("请先勾选要删除的内容。", "error")
-            return redirect(url_for("reviews"))
-        if len(row_ids) > 20:
-            flash("为避免误操作，每次最多删除 20 条内容。", "error")
-            return redirect(url_for("reviews"))
-        try:
-            items = [store.get_review("tencent", row_id) for row_id in row_ids]
-            for item in items:
-                if item.get("delete_status") == "deleted":
-                    raise ValueError(f"内容 {item['item_id']} 已经删除")
-                store.ensure_current_tencent_review(item["id"])
-            challenges = {
-                str(row_id): store.create_delete_challenge(row_id, "admin", remote_ip())
-                for row_id in row_ids
-            }
-            batch_token = store.create_action_challenge("bulk_delete", "admin", remote_ip())
-        except ValueError as exc:
-            flash(str(exc), "error")
-            return redirect(url_for("reviews"))
-        session["bulk_delete_challenge"] = {
-            "row_ids": row_ids,
-            "tokens": challenges,
-            "batch_token": batch_token,
-            "created_at": int(time.time()),
-        }
-        return redirect(url_for("confirm_bulk_delete"))
+        return execute_bulk_delete()
 
     @app.get("/reviews/bulk-delete/confirm")
     @login_required
     def confirm_bulk_delete():
-        challenge = session.get("bulk_delete_challenge") or {}
-        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
-        if not row_ids or int(challenge.get("created_at") or 0) < int(time.time()) - 600:
-            session.pop("bulk_delete_challenge", None)
-            flash("批量删除确认已失效，请重新勾选。", "error")
-            return redirect(url_for("reviews"))
-        try:
-            items = [store.get_review("tencent", row_id) for row_id in row_ids]
-        except ValueError:
-            abort(404)
-        return render_template(
-            "bulk_confirm_delete.html",
-            items=items,
-            confirmation_text=f"删除 {len(items)} 条",
-        )
+        return redirect(url_for("reviews"))
 
     @app.post("/reviews/bulk-delete")
     @login_required
     def execute_bulk_delete():
-        challenge = session.get("bulk_delete_challenge", {}) or {}
-        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
-        tokens = challenge.get("tokens") or {}
-        password = request.form.get("password", "")
-        confirmation = request.form.get("confirmation", "").strip()
-        reason = request.form.get("reason", "").strip()[:1000]
+        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
+        reason = "管理员在内容审核页批量删除"
         if not manual_delete_enabled():
             flash("服务器尚未启用人工删除能力。", "error")
             return redirect(url_for("reviews"))
-        if not row_ids or int(challenge.get("created_at") or 0) < int(time.time()) - 600:
-            flash("批量删除确认已失效，请重新勾选。", "error")
+        if not row_ids:
+            flash("请先勾选要删除的内容。", "error")
             return redirect(url_for("reviews"))
-        if not check_password_hash(password_hash, password):
-            store.record_audit(
-                "admin",
-                "delete.bulk_reauth_failed",
-                "tencent",
-                ",".join(str(value) for value in row_ids),
-                {"count": len(row_ids)},
-                remote_ip(),
-            )
-            flash("管理员密码验证失败，未执行任何删除。", "error")
+        if len(row_ids) > 20:
+            flash("每次最多删除 20 条内容。", "error")
             return redirect(url_for("reviews"))
-        if confirmation != "confirmed" or len(reason) < 4:
-            flash("请勾选批量删除确认，并填写至少 4 个字符的删除理由。", "error")
-            return redirect(url_for("reviews"))
-        session.pop("bulk_delete_challenge", None)
-
-        try:
-            store.consume_action_challenge(
-                "bulk_delete", "admin", str(challenge.get("batch_token") or "")
-            )
-        except ValueError as exc:
-            flash(str(exc), "error")
-            return redirect(url_for("reviews", status=""))
 
         client = cli_factory()
         deleted = 0
@@ -577,9 +596,7 @@ def create_app(
         stopped_for_rate_limit = False
         for row_id in row_ids:
             try:
-                store.consume_delete_challenge(
-                    row_id, "admin", str(tokens.get(str(row_id)) or "")
-                )
+                store.ensure_current_tencent_review(row_id)
                 item = store.get_review("tencent", row_id)
                 _delete_tencent_item(client, item)
             except Exception as exc:
@@ -607,7 +624,7 @@ def create_app(
             flash(f"批量删除完成：成功 {deleted} 条、失败 {failed} 条。", "error")
         else:
             flash(
-                f"批量删除完成：成功 {deleted} 条、失败 0 条。理由和平台结果均已记录。",
+                f"批量删除完成：成功 {deleted} 条、失败 0 条。",
                 "success",
             )
         return redirect(url_for("reviews", status=""))
@@ -615,89 +632,29 @@ def create_app(
     @app.post("/reviews/bulk-move/prepare")
     @login_required
     def prepare_bulk_move():
-        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
-        if not row_ids:
-            flash("请先勾选要调整栏目的内容。", "error")
-            return redirect(url_for("reviews"))
-        if len(row_ids) > 20:
-            flash("每次最多移动 20 条内容。", "error")
-            return redirect(url_for("reviews"))
-        current = GuardConfig.from_file(str(resolved_config))
-        target = _find_move_target(current, request.form.get("move_target", ""))
-        if target is None:
-            flash("请选择有效的目标栏目。", "error")
-            return redirect(url_for("reviews"))
-        try:
-            items = [store.get_review("tencent", row_id) for row_id in row_ids]
-            if any(item["guild_id"] != target["guild_id"] for item in items):
-                raise ValueError("所选内容必须属于目标栏目的同一个频道")
-            if any(item["channel_id"] == target["channel_id"] for item in items):
-                raise ValueError("所选内容中已有帖子位于目标栏目，请取消这些帖子后重试")
-        except ValueError as exc:
-            flash(str(exc), "error")
-            return redirect(url_for("reviews"))
-        session["bulk_move_challenge"] = {
-            "row_ids": row_ids,
-            "target_key": target["key"],
-            "token": store.create_action_challenge("bulk_move", "admin", remote_ip()),
-            "created_at": int(time.time()),
-        }
-        return redirect(url_for("confirm_bulk_move"))
+        return execute_bulk_move()
 
     @app.get("/reviews/bulk-move/confirm")
     @login_required
     def confirm_bulk_move():
-        challenge = session.get("bulk_move_challenge") or {}
-        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
-        current = GuardConfig.from_file(str(resolved_config))
-        target = _find_move_target(current, challenge.get("target_key", ""))
-        if (
-            not row_ids
-            or target is None
-            or int(challenge.get("created_at") or 0) < int(time.time()) - 600
-        ):
-            session.pop("bulk_move_challenge", None)
-            flash("栏目调整确认已失效，请重新勾选。", "error")
-            return redirect(url_for("reviews"))
-        try:
-            items = [store.get_review("tencent", row_id) for row_id in row_ids]
-        except ValueError:
-            abort(404)
-        return render_template("bulk_confirm_move.html", items=items, target=target)
+        return redirect(url_for("reviews"))
 
     @app.post("/reviews/bulk-move")
     @login_required
     def execute_bulk_move():
-        challenge = session.get("bulk_move_challenge") or {}
-        row_ids = _selected_row_ids(challenge.get("row_ids") or [])
+        row_ids = _selected_row_ids(request.form.getlist("review_ids"))
         current = GuardConfig.from_file(str(resolved_config))
-        target = _find_move_target(current, challenge.get("target_key", ""))
-        reason = request.form.get("reason", "").strip()[:1000]
-        password = request.form.get("password", "")
-        confirmation = request.form.get("confirmation", "")
-        if (
-            not row_ids
-            or target is None
-            or int(challenge.get("created_at") or 0) < int(time.time()) - 600
-        ):
-            flash("栏目调整确认已失效，请重新勾选。", "error")
+        target = _find_move_target(current, request.form.get("move_target", ""))
+        reason = "管理员在内容审核页直接调整栏目"
+        if not row_ids or target is None:
+            flash("请选择内容和目标栏目。", "error")
             return redirect(url_for("reviews"))
-        if not check_password_hash(password_hash, password):
-            store.record_audit(
-                "admin", "move.bulk_reauth_failed", "tencent", ",".join(map(str, row_ids)),
-                {"count": len(row_ids)}, remote_ip()
-            )
-            flash("管理员密码验证失败，未移动任何内容。", "error")
-            return redirect(url_for("confirm_bulk_move"))
-        if confirmation != "confirmed" or len(reason) < 4:
-            flash("请勾选栏目调整确认，并填写至少 4 个字符的调整理由。", "error")
-            return redirect(url_for("confirm_bulk_move"))
-        session.pop("bulk_move_challenge", None)
-
         try:
-            store.consume_action_challenge(
-                "bulk_move", "admin", str(challenge.get("token") or "")
-            )
+            items = [store.get_review("tencent", row_id) for row_id in row_ids]
+            if len(row_ids) > 20:
+                raise ValueError("每次最多移动 20 条内容")
+            if any(item["guild_id"] != target["guild_id"] for item in items):
+                raise ValueError("所选内容必须属于目标栏目的同一个频道")
         except ValueError as exc:
             flash(str(exc), "error")
             return redirect(url_for("reviews", status=""))
@@ -707,7 +664,7 @@ def create_app(
         failed = 0
         stopped = False
         for row_id in row_ids:
-            item = store.get_review("tencent", row_id)
+            item = next(value for value in items if value["id"] == row_id)
             try:
                 client.move_feed(
                     item["guild_id"], item["channel_id"], target["channel_id"], item["item_id"]
@@ -725,7 +682,7 @@ def create_app(
             else:
                 store.record_move_result(
                     row_id, "admin", "moved", target["channel_id"],
-                    target["section"], "", reason, remote_ip()
+                    target["section"], "", reason, remote_ip(), target["label"]
                 )
                 moved += 1
         untouched = len(row_ids) - moved - failed
@@ -851,41 +808,27 @@ def create_app(
                     )
                     _reject_unsafe_file_parameters(parameters)
                     is_write = bool(capability["is_write"])
-                    execution_mode = request.form.get("execution_mode", "preview")
-                    live = is_write and execution_mode == "live"
-                    reason = str(request.form.get("reason") or "").strip()
+                    live = is_write
                     if live:
                         if not official_writes_enabled():
                             raise ValueError("生产环境尚未开启官方写操作")
-                        if not check_password_hash(
-                            password_hash, request.form.get("password", "")
-                        ):
-                            raise ValueError("管理员密码验证失败")
-                        if len(reason) < 4:
-                            raise ValueError("真实操作必须填写至少 4 个字的原因")
-                        if request.form.get("confirmation") != "confirmed":
-                            raise ValueError("请勾选确认影响范围")
-                        if capability["is_high_risk"] and request.form.get(
-                            "confirmation_phrase", ""
-                        ).strip() != "确认执行":
-                            raise ValueError("高风险操作必须输入“确认执行”")
                     result = safe_payload(
                         client.execute_capability(
                             domain,
                             action,
                             parameters,
                             confirmed=live,
-                            dry_run=is_write and not live,
+                            dry_run=False,
                         )
                     )
                     store.record_audit(
                         "admin",
-                        "official.execute" if live else "official.preview" if is_write else "official.read",
+                        "official.execute" if live else "official.read",
                         domain,
                         action,
                         {
                             "risk": capability["risk"],
-                            "reason": reason if live else "",
+                            "reason": "管理员在频道管理页直接执行" if live else "",
                             "parameters": safe_audit_parameters(parameters),
                             "success": bool(result.get("success", True)) if isinstance(result, dict) else True,
                         },
@@ -1147,7 +1090,7 @@ def create_app(
                         message=message,
                     ),
                 )
-                report = monitor.scan_once()
+                report = monitor.scan_once(full_sync=True)
                 summary = report.public_summary()
                 store.record_audit(
                     "admin",
@@ -1174,7 +1117,7 @@ def create_app(
                     {"job_id": job_id, "error": str(exc)[:500]},
                     requester_ip,
                 )
-                scan_status_store.fail(job_id, str(exc))
+                scan_status_store.fail(job_id, _public_operation_error(exc))
             finally:
                 lease.release()
 
@@ -1203,7 +1146,7 @@ def create_app(
         state = scan_status_store.read(job_id)
         if state is None:
             abort(404)
-        state["results_url"] = url_for("ai_analysis")
+        state["results_url"] = url_for("contents")
         return jsonify(state)
 
     return app
@@ -1312,7 +1255,7 @@ def _official_workflows(capabilities) -> list:
         (
             "risk",
             "处理风险",
-            "删除、禁言、移出成员等高影响动作，会先检查填写内容。",
+            "删除、禁言、移出成员等操作提交后直接执行，并保留操作记录。",
             ("del-feed", "delete-and-mute", "modify-member-shut-up", "kick-guild-member"),
         ),
         (
@@ -1481,8 +1424,8 @@ def _audit_view(item: Dict[str, Any]) -> Dict[str, str]:
         "auth.failed": "登录失败",
         "auth.blocked": "登录暂时受限",
         "review.resolve": "完成内容审核",
-        "delete.prepare": "开始删除确认",
-        "bulk_delete.prepare": "开始批量删除确认",
+        "delete.prepare": "旧版删除准备记录",
+        "bulk_delete.prepare": "旧版批量删除准备记录",
         "delete.reauth_failed": "删除密码验证失败",
         "delete.bulk_reauth_failed": "批量删除密码验证失败",
         "delete.execute": "删除内容",
@@ -1518,9 +1461,8 @@ def _audit_view(item: Dict[str, Any]) -> Dict[str, str]:
         result = "已完成"
         tone = "success"
     elif action in {"delete.prepare", "bulk_delete.prepare"}:
-        summary = "已进入二次确认，此时还没有删除频道内容"
-        result = "等待确认"
-        tone = "warning"
+        summary = "旧版流程留下的准备记录，当时没有修改频道内容"
+        result = "历史记录"
     elif action == "delete.execute":
         if details.get("status") == "deleted":
             summary = "频道内容已删除，删除原因已留存"
@@ -1965,10 +1907,10 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
 
     if item.get("has_conflict"):
         return {
-            "status": "系统结论不一致",
-            "action": "查看完整内容后决定",
-            "issue": "两项检查结果不一致",
-            "why": f"风险判断和“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”建议互相矛盾，系统已停止直接处理。",
+            "status": "两项判断有分歧",
+            "action": "查看原帖后选择最终处理方式",
+            "issue": "风险提示与处理建议不同",
+            "why": f"系统对风险程度和“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”给出了不同判断，请根据原文和证据作最终决定。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
             "score": score_detail,
         }

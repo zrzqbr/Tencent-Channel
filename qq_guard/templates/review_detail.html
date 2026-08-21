@@ -2,7 +2,7 @@
 {% block title %}处理内容 · 腾讯频道治理{% endblock %}
 {% block heading %}处理内容{% endblock %}
 {% block page_intro %}<p class="page-subtitle">看清楚这条内容，再选择保留、调整栏目或删除</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容处理</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容审核</a>{% endblock %}
 {% block content %}
 <div class="detail-grid">
   <section class="panel detail-main">
@@ -43,7 +43,7 @@
     <form action="{{ url_for('resolve_review', source=item.source, row_id=item.id) }}" method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
       <label>处理备注<textarea name="notes" rows="4" placeholder="需要留痕时填写原因"></textarea></label>
-      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>系统结论不一致</strong><small>请先核对原文和证据。确认保留时，需要勾选下方确认。</small></span></div><label class="confirm-check"><input type="checkbox" name="conflict_confirmation" value="confirmed"><span>我已核对原文和证据，确认保留</span></label>{% endif %}
+      {% if item.has_conflict %}<div class="consistency-warning"><i class="ri-error-warning-line" aria-hidden="true"></i><span><strong>系统建议与风险判断不一致</strong><small>请结合原文和证据，直接选择最终处理结果。</small></span></div>{% endif %}
       <p class="action-effect">以下选项只更新后台处理记录，不会修改频道原帖。</p>
       <div class="button-grid">
         <button class="success-button" name="resolution" value="approved" type="submit">保留并完成</button>
@@ -52,15 +52,15 @@
       </div>
     </form>
     {% if item.source == 'tencent' and item.placement_suggestion %}
-    <div class="action-block move-block"><h3>调整栏目</h3><p>系统判断这条内容更适合另一个栏目。调整只会移动原帖，不会重新发布。</p><form action="{{ url_for('prepare_bulk_move') }}" method="post" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ item.id }}"><label>调整到<select name="move_target" required>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if target.key == item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select></label><button class="primary-button full" type="submit">确认调整栏目</button></form></div>
+    <div class="action-block move-block"><h3>调整栏目</h3><p>选择目标栏目后直接移动原帖。</p><form action="{{ url_for('execute_bulk_move') }}" method="post" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ item.id }}"><label>调整到<select name="move_target" required>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if target.key == item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select></label><button class="primary-button full" type="submit">移动到这个栏目</button></form></div>
     {% endif %}
     {% if item.source == 'tencent' %}
     <div class="danger-zone">
       <h3>删除内容</h3>
-      <p>删除会从腾讯频道移除这条内容。提交前需要重新输入密码、填写理由并再次确认。</p>
-      <form action="{{ url_for('prepare_delete', row_id=item.id) }}" method="post">
+      <p>点击后会直接从腾讯频道移除这条内容，并自动写入操作记录。</p>
+      <form action="{{ url_for('execute_delete', row_id=item.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}>{{ '已删除' if item.delete_status == 'deleted' else '确认删除这条内容' }}</button>
+        <button class="danger-button full" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}>{{ '已删除' if item.delete_status == 'deleted' else '删除这条内容' }}</button>
       </form>
       {% if item.delete_error %}<p class="error-text">{{ item.delete_error }}</p>{% endif %}
     </div>

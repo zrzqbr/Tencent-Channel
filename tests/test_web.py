@@ -22,6 +22,7 @@ class FakeTencentClient:
     def __init__(self) -> None:
         self.deleted = []
         self.moved = []
+        self.edited = []
         self.capability_calls = []
 
     def capability_index(self):
@@ -89,6 +90,14 @@ class FakeTencentClient:
 
     def move_feed(self, guild_id, original_channel_id, target_channel_id, feed_id):
         self.moved.append((guild_id, original_channel_id, target_channel_id, feed_id))
+        return {"success": True}
+
+    def alter_feed(
+        self, guild_id, channel_id, feed_id, create_time, feed_type, title, content, markdown=False
+    ):
+        self.edited.append(
+            (guild_id, channel_id, feed_id, create_time, feed_type, title, content, markdown)
+        )
         return {"success": True}
 
 
@@ -212,6 +221,36 @@ class WebTests(unittest.TestCase):
             )
             return int(cursor.lastrowid)
 
+    def insert_cached_content(self, feed_id="feed-ok", title="正常帖子"):
+        AdminStore(self.database_path)
+        detail = {
+            "feed_id": feed_id,
+            "guild_id": "1",
+            "guild_name": "测试频道",
+            "channel_id": "2",
+            "channel_name": "问答与交流",
+            "title": title,
+            "content": "这是一条没有发现问题的完整正文",
+            "author": "测试用户",
+            "author_id": "author-1",
+            "feed_type": 1,
+            "create_time": "2026-08-21 10:00:00",
+            "create_time_raw": 1787277600,
+            "share_url": "https://pd.qq.com/s/test",
+        }
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                INSERT INTO tencent_feed_cache
+                (guild_id, channel_id, feed_id, version_key, detail_json, fetched_at,
+                 guild_name, channel_name, first_seen_at, last_seen_at)
+                VALUES ('1', '2', ?, 'v1', ?, '2026-08-21T02:00:00+00:00',
+                        '测试频道', '问答与交流', '2026-08-21T02:00:00+00:00',
+                        '2026-08-21T02:00:00+00:00')
+                """,
+                (feed_id, json.dumps(detail, ensure_ascii=False)),
+            )
+
     def test_dashboard_requires_login(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 302)
@@ -234,7 +273,8 @@ class WebTests(unittest.TestCase):
         self.assertIn("已检查风险".encode("utf-8"), response.data)
         self.assertIn("等待智能判断".encode("utf-8"), response.data)
         self.assertIn("等你确认".encode("utf-8"), response.data)
-        self.assertIn("内容处理".encode("utf-8"), response.data)
+        self.assertIn("全部内容".encode("utf-8"), response.data)
+        self.assertIn("内容审核".encode("utf-8"), response.data)
 
     def test_dashboard_exposes_task_queues_and_review_drawer(self):
         self.insert_tencent_review()
@@ -290,7 +330,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("处理风险".encode("utf-8"), response.data)
         self.assertIn("移动帖子到其他栏目".encode("utf-8"), response.data)
         self.assertNotIn("移动帖子到其他版块".encode("utf-8"), response.data)
-        self.assertIn("当前只允许查看和检查填写内容".encode("utf-8"), response.data)
+        self.assertIn("当前只允许查看频道数据".encode("utf-8"), response.data)
         self.assertIn(b'<details class="capability-catalog">', response.data)
         self.assertNotIn(b'<details class="capability-catalog" open>', response.data)
 
@@ -332,7 +372,8 @@ class WebTests(unittest.TestCase):
 
         response = self.client.get(f"/reviews/tencent/{row_id}")
 
-        self.assertIn("确认删除这条内容".encode("utf-8"), response.data)
+        self.assertIn("删除这条内容".encode("utf-8"), response.data)
+        self.assertNotIn("再次输入管理密码".encode("utf-8"), response.data)
         self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
         self.assertNotIn("风险影响 +80".encode("utf-8"), response.data)
@@ -351,7 +392,7 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"TENCENT_TOKENHUB_API_KEY", response.data)
         self.assertIn("智能判断服务尚未连接".encode("utf-8"), response.data)
 
-    def test_conflicting_high_risk_allow_requires_explicit_confirmation(self):
+    def test_conflicting_high_risk_allow_can_be_resolved_directly(self):
         row_id = self.insert_tencent_review(title="风险与建议冲突")
         with sqlite3.connect(str(self.database_path)) as connection:
             connection.execute(
@@ -365,24 +406,12 @@ class WebTests(unittest.TestCase):
             data={"csrf_token": token, "resolution": "approved", "notes": "人工确认"},
             follow_redirects=True,
         )
-        self.assertIn("风险等级与建议动作不一致".encode("utf-8"), response.data)
+        self.assertIn("处理结果已保存".encode("utf-8"), response.data)
         with sqlite3.connect(str(self.database_path)) as connection:
             status = connection.execute(
                 "SELECT review_status FROM tencent_moderation_findings WHERE id = ?", (row_id,)
             ).fetchone()[0]
-        self.assertEqual(status, "pending")
-
-        response = self.client.post(
-            f"/reviews/tencent/{row_id}/resolve",
-            data={
-                "csrf_token": self.csrf(response),
-                "resolution": "approved",
-                "notes": "已核对原文和证据",
-                "conflict_confirmation": "confirmed",
-            },
-            follow_redirects=True,
-        )
-        self.assertIn("处理结果已保存".encode("utf-8"), response.data)
+        self.assertEqual(status, "approved")
 
     def test_post_requires_csrf(self):
         self.login()
@@ -391,10 +420,40 @@ class WebTests(unittest.TestCase):
 
     def test_all_admin_pages_render_after_login(self):
         self.login()
-        for path in ["/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test", "/official"]:
+        for path in ["/contents", "/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test", "/official"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
+
+    def test_all_content_page_includes_posts_without_moderation_findings(self):
+        self.insert_cached_content()
+        self.login()
+
+        response = self.client.get("/contents")
+
+        self.assertIn("正常帖子".encode("utf-8"), response.data)
+        self.assertIn("没有发现问题".encode("utf-8"), response.data)
+        self.assertIn("正文已同步".encode("utf-8"), response.data)
+        self.assertNotIn("再次输入管理密码".encode("utf-8"), response.data)
+
+    def test_cached_content_can_be_edited_directly(self):
+        self.insert_cached_content()
+        response = self.login()
+
+        response = self.client.post(
+            "/contents/1/feed-ok/edit",
+            data={
+                "csrf_token": self.csrf(response),
+                "title": "修改后的标题",
+                "body": "修改后的正文",
+            },
+            follow_redirects=True,
+        )
+
+        self.assertIn("帖子已修改".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.edited[0][5:7], ("修改后的标题", "修改后的正文"))
+        item = AdminStore(self.database_path).get_content("1", "feed-ok")
+        self.assertEqual((item["title"], item["body"]), ("修改后的标题", "修改后的正文"))
 
     def test_official_read_capability_executes_and_is_audited(self):
         response = self.login()
@@ -411,23 +470,22 @@ class WebTests(unittest.TestCase):
             ("feed", "get-feed-detail", {"feed_id": "B_test"}, False, False),
         )
 
-    def test_official_high_risk_live_action_requires_password(self):
-        self.login()
-        response = self.client.get("/official/feed/del-feed")
-        response = self.client.post(
-            "/official/feed/del-feed",
-            data={
-                "csrf_token": self.csrf(response),
-                "param__feed-id": "B_test",
-                "execution_mode": "live",
-                "password": "wrong",
-                "reason": "测试高风险保护",
-                "confirmation": "confirmed",
-                "confirmation_phrase": "确认执行",
-            },
+    def test_official_high_risk_action_executes_without_reauthentication(self):
+        with patch.dict(os.environ, {"QQ_GUARD_OFFICIAL_WRITES_ENABLED": "true"}):
+            self.login()
+            response = self.client.get("/official/feed/del-feed")
+            response = self.client.post(
+                "/official/feed/del-feed",
+                data={
+                    "csrf_token": self.csrf(response),
+                    "param__feed-id": "B_test",
+                },
+            )
+        self.assertIn("操作结果".encode("utf-8"), response.data)
+        self.assertEqual(
+            self.fake_cli.capability_calls,
+            [("feed", "del-feed", {"feed_id": "B_test"}, True, False)],
         )
-        self.assertIn("本次操作没有完成".encode("utf-8"), response.data)
-        self.assertEqual(self.fake_cli.capability_calls, [])
 
     def test_content_test_explains_classification(self):
         response = self.login()
@@ -626,25 +684,12 @@ class WebTests(unittest.TestCase):
                 self.assertNotIn("栏目 ID".encode("utf-8"), response.data)
                 self.assertNotIn("栏目编号".encode("utf-8"), response.data)
 
-    def test_delete_requires_second_confirmation_and_reauthentication(self):
+    def test_delete_executes_directly_for_logged_in_admin(self):
         row_id = self.insert_tencent_review()
         response = self.login()
-        token = self.csrf(response)
-        response = self.client.post(
-            f"/reviews/tencent/{row_id}/prepare-delete",
-            data={"csrf_token": token},
-            follow_redirects=True,
-        )
-        self.assertIn("这一步会真实删除频道内容".encode("utf-8"), response.data)
-        token = self.csrf(response)
         response = self.client.post(
             f"/reviews/tencent/{row_id}/delete",
-            data={
-                "csrf_token": token,
-                "password": TEST_PASSWORD,
-                "confirmation": "confirmed",
-                "reason": "命中明确的违规敏感词规则",
-            },
+            data={"csrf_token": self.csrf(response)},
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
@@ -668,49 +713,26 @@ class WebTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(status, "deleted")
 
-    def test_delete_fails_with_wrong_password(self):
+    def test_delete_does_not_require_password_field(self):
         row_id = self.insert_tencent_review()
         response = self.login()
-        token = self.csrf(response)
-        response = self.client.post(
-            f"/reviews/tencent/{row_id}/prepare-delete",
-            data={"csrf_token": token},
-            follow_redirects=True,
-        )
         response = self.client.post(
             f"/reviews/tencent/{row_id}/delete",
-            data={
-                "csrf_token": self.csrf(response),
-                "password": "bad",
-                "confirmation": "confirmed",
-                "reason": "不应实际执行删除操作",
-            },
+            data={"csrf_token": self.csrf(response)},
             follow_redirects=True,
         )
-        self.assertIn("密码验证失败".encode("utf-8"), response.data)
-        self.assertEqual(self.fake_cli.deleted, [])
+        self.assertIn("内容已从腾讯频道删除".encode("utf-8"), response.data)
+        self.assertEqual(len(self.fake_cli.deleted), 1)
 
-    def test_bulk_delete_requires_selection_and_second_confirmation(self):
+    def test_bulk_delete_executes_selected_items_directly(self):
         first = self.insert_tencent_review("feed-1", "违规内容一")
         second = self.insert_tencent_review("feed-2", "违规内容二")
         response = self.login()
         response = self.client.post(
-            "/reviews/bulk-delete/prepare",
-            data={
-                "csrf_token": self.csrf(response),
-                "review_ids": [str(first), str(second)],
-            },
-            follow_redirects=True,
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("将真实删除 2 条".encode("utf-8"), response.data)
-        response = self.client.post(
             "/reviews/bulk-delete",
             data={
                 "csrf_token": self.csrf(response),
-                "password": TEST_PASSWORD,
-                "confirmation": "confirmed",
-                "reason": "两条均命中明确违规规则",
+                "review_ids": [str(first), str(second)],
             },
             follow_redirects=True,
         )
@@ -724,25 +746,14 @@ class WebTests(unittest.TestCase):
             ],
         )
 
-    def test_bulk_delete_wrong_password_deletes_nothing(self):
-        row_id = self.insert_tencent_review()
+    def test_bulk_delete_requires_selection(self):
         response = self.login()
         response = self.client.post(
-            "/reviews/bulk-delete/prepare",
-            data={"csrf_token": self.csrf(response), "review_ids": [str(row_id)]},
-            follow_redirects=True,
-        )
-        response = self.client.post(
             "/reviews/bulk-delete",
-            data={
-                "csrf_token": self.csrf(response),
-                "password": "wrong",
-                "confirmation": "confirmed",
-                "reason": "不应执行任何删除",
-            },
+            data={"csrf_token": self.csrf(response)},
             follow_redirects=True,
         )
-        self.assertIn("未执行任何删除".encode("utf-8"), response.data)
+        self.assertIn("请先勾选要删除的内容".encode("utf-8"), response.data)
         self.assertEqual(self.fake_cli.deleted, [])
 
     def test_batch_action_challenge_can_only_be_consumed_once(self):
@@ -784,23 +795,11 @@ class WebTests(unittest.TestCase):
 
         response = self.login()
         response = self.client.post(
-            "/reviews/bulk-move/prepare",
+            "/reviews/bulk-move",
             data={
                 "csrf_token": self.csrf(response),
                 "review_ids": [str(first), str(second)],
                 "move_target": "1:3:practical_article",
-            },
-            follow_redirects=True,
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("栏目调整二次确认".encode("utf-8"), response.data)
-        response = self.client.post(
-            "/reviews/bulk-move",
-            data={
-                "csrf_token": self.csrf(response),
-                "password": TEST_PASSWORD,
-                "confirmation": "confirmed",
-                "reason": "这些内容是完整案例文章",
             },
             follow_redirects=True,
         )
@@ -877,7 +876,7 @@ class WebTests(unittest.TestCase):
             def __init__(self, config, client, progress_callback=None):
                 self.progress_callback = progress_callback
 
-            def scan_once(self):
+            def scan_once(self, **kwargs):
                 self.progress_callback(40, "规则初审", "正在检查敏感词")
                 self.progress_callback(95, "保存审核结果", "正在写入记录")
                 return Report()

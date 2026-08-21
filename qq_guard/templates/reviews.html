@@ -1,12 +1,12 @@
 {% extends "base.html" %}
-{% block title %}内容处理 · 腾讯频道治理{% endblock %}
-{% block heading %}内容处理{% endblock %}
+{% block title %}内容审核 · 腾讯频道治理{% endblock %}
+{% block heading %}内容审核{% endblock %}
 {% block page_intro %}<p class="page-subtitle">所有待处理内容都在这里，打开一条即可查看原因并完成处理</p>{% endblock %}
 {% block topbar_extra %}<a class="secondary-button" href="{{ url_for('ai_analysis') }}"><i class="ri-file-list-3-line" aria-hidden="true"></i>查看判断记录</a>{% endblock %}
 {% block content %}
 <section class="info-banner review-guide">
   <strong>处理顺序很简单：看内容、看原因、选下一步</strong>
-  <p>调整栏目和删除都会先让你确认；系统不会替你直接改动频道。</p>
+  <p>保留只更新审核状态；调整栏目和删除会直接同步到腾讯频道。</p>
 </section>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
@@ -17,7 +17,7 @@
   </form>
 </section>
 <section class="panel">
-  <form action="{{ url_for('prepare_bulk_delete') }}" method="post" data-bulk-form>
+  <form action="{{ url_for('execute_bulk_delete') }}" method="post" data-bulk-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <div class="bulk-toolbar">
       <label class="bulk-select-all"><input type="checkbox" data-select-all> 全选本页可操作内容</label>
@@ -28,9 +28,9 @@
           <option value="">选择目标栏目</option>
           {% for target in move_targets %}<option value="{{ target.key }}">{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}
         </select>
-        <button class="primary-button compact" type="submit" formaction="{{ url_for('prepare_bulk_move') }}" data-bulk-move disabled>移动所选</button>
+        <button class="primary-button compact" type="submit" formaction="{{ url_for('execute_bulk_move') }}" data-bulk-move disabled>移动所选</button>
       </div>
-      <small>{% if manual_delete_enabled %}删除和调整栏目都会再次确认，单次最多处理 20 条。{% else %}调整栏目可以使用；删除功能还未开启。{% endif %}</small>
+      <small>{% if manual_delete_enabled %}选择后直接执行，单次最多处理 20 条。{% else %}调整栏目可以使用；删除功能还未开启。{% endif %}</small>
     </div>
     {% set reviews = items %}{% include "partials/review_table.html" %}
   </form>

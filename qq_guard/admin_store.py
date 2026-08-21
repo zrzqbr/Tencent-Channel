@@ -22,7 +22,7 @@ def _json(value: Any, fallback: Any) -> Any:
 
 
 class AdminStore:
-    """后台查询、人工审核、二次确认和不可变操作审计。"""
+    """后台查询、人工审核、内容操作和不可变操作审计。"""
 
     def __init__(self, database_path: Path) -> None:
         self.database_path = Path(database_path)
@@ -173,6 +173,197 @@ class AdminStore:
             key=lambda item: (int(item.get("risk_score") or 0), str(item.get("created_at") or "")),
             reverse=True,
         )[:limit]
+
+    def contents(
+        self,
+        guild_id: str = "",
+        channel_id: str = "",
+        query: str = "",
+        *,
+        include_deleted: bool = False,
+        limit: int = 500,
+    ) -> List[Dict[str, Any]]:
+        limit = max(1, min(int(limit), 1000))
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT cache.*,
+                       finding.id AS finding_id,
+                       finding.action, finding.risk_level, finding.risk_score,
+                       finding.review_status, finding.delete_status, finding.delete_error,
+                       finding.section, finding.reasons_json
+                FROM tencent_feed_cache AS cache
+                LEFT JOIN tencent_moderation_findings AS finding
+                  ON finding.id = (
+                    SELECT MAX(current.id)
+                    FROM tencent_moderation_findings AS current
+                    WHERE current.guild_id = cache.guild_id
+                      AND current.feed_id = cache.feed_id
+                  )
+                WHERE (? = '' OR cache.guild_id = ?)
+                  AND (? = '' OR cache.channel_id = ?)
+                  AND (? = 1 OR cache.deleted_at IS NULL)
+                ORDER BY COALESCE(
+                    CAST(json_extract(cache.detail_json, '$.create_time_raw') AS INTEGER),
+                    CAST(json_extract(cache.summary_json, '$.create_time_raw') AS INTEGER),
+                    0
+                ) DESC, cache.last_seen_at DESC
+                LIMIT ?
+                """,
+                (
+                    guild_id,
+                    guild_id,
+                    channel_id,
+                    channel_id,
+                    1 if include_deleted else 0,
+                    limit,
+                ),
+            ).fetchall()
+        items = [self._content_row(row) for row in rows]
+        normalized_query = str(query or "").strip().casefold()
+        if normalized_query:
+            items = [
+                item
+                for item in items
+                if normalized_query
+                in " ".join(
+                    str(item.get(key) or "")
+                    for key in ("title", "body", "author_name", "channel_name", "guild_name")
+                ).casefold()
+            ]
+        return items
+
+    def get_content(self, guild_id: str, feed_id: str) -> Dict[str, Any]:
+        items = self.contents(guild_id=guild_id, include_deleted=True, limit=1000)
+        item = next((value for value in items if value["feed_id"] == feed_id), None)
+        if item is None:
+            raise ValueError("频道内容不存在，请先执行一次巡检")
+        return item
+
+    def record_content_edit(
+        self,
+        guild_id: str,
+        feed_id: str,
+        title: str,
+        body: str,
+        actor: str,
+        remote_ip: str = "",
+    ) -> None:
+        now = _utc_now()
+        with self._lock, self._connect() as connection:
+            row = connection.execute(
+                "SELECT detail_json, summary_json FROM tencent_feed_cache WHERE guild_id = ? AND feed_id = ?",
+                (guild_id, feed_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError("频道内容不存在")
+            detail = _json(row["detail_json"], {})
+            summary = _json(row["summary_json"], {})
+            detail.update({"title": title, "content": body})
+            summary.update({"title": title, "content_snippet": body[:300]})
+            connection.execute(
+                """
+                UPDATE tencent_feed_cache
+                SET detail_json = ?, summary_json = ?, fetched_at = ?, last_seen_at = ?
+                WHERE guild_id = ? AND feed_id = ?
+                """,
+                (
+                    json.dumps(detail, ensure_ascii=False, sort_keys=True),
+                    json.dumps(summary, ensure_ascii=False, sort_keys=True),
+                    now,
+                    now,
+                    guild_id,
+                    feed_id,
+                ),
+            )
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET title = ?, body = ? WHERE guild_id = ? AND feed_id = ?",
+                (title, body, guild_id, feed_id),
+            )
+            self._insert_audit(
+                connection,
+                actor,
+                "content.edit",
+                "tencent",
+                feed_id,
+                {"guild_id": guild_id, "title": title},
+                remote_ip,
+            )
+            connection.commit()
+
+    def record_content_delete(
+        self,
+        guild_id: str,
+        feed_id: str,
+        actor: str,
+        error: str = "",
+        remote_ip: str = "",
+    ) -> None:
+        now = _utc_now()
+        status = "failed" if error else "deleted"
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                "UPDATE tencent_feed_cache SET deleted_at = ? WHERE guild_id = ? AND feed_id = ?",
+                (now if not error else None, guild_id, feed_id),
+            )
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET delete_status = ?, delete_error = ?, delete_attempted_at = ?,
+                    review_status = CASE WHEN ? = 'deleted' THEN 'deleted' ELSE review_status END
+                WHERE guild_id = ? AND feed_id = ?
+                """,
+                (status, error or None, now, status, guild_id, feed_id),
+            )
+            self._insert_audit(
+                connection,
+                actor,
+                "delete.execute" if not error else "delete.failed",
+                "tencent",
+                feed_id,
+                {"guild_id": guild_id, "status": status, "error": error},
+                remote_ip,
+            )
+            connection.commit()
+
+    def record_content_move(
+        self,
+        guild_id: str,
+        feed_id: str,
+        channel_id: str,
+        channel_name: str,
+        section: str,
+        actor: str,
+        remote_ip: str = "",
+    ) -> None:
+        now = _utc_now()
+        with self._lock, self._connect() as connection:
+            connection.execute(
+                """
+                UPDATE tencent_feed_cache
+                SET channel_id = ?, channel_name = ?, last_seen_at = ?
+                WHERE guild_id = ? AND feed_id = ?
+                """,
+                (channel_id, channel_name, now, guild_id, feed_id),
+            )
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET channel_id = ?, section = ?, review_status = 'approved'
+                WHERE guild_id = ? AND feed_id = ?
+                """,
+                (channel_id, section, guild_id, feed_id),
+            )
+            self._insert_audit(
+                connection,
+                actor,
+                "move.execute",
+                "tencent",
+                feed_id,
+                {"guild_id": guild_id, "target_channel_id": channel_id, "target_section": section},
+                remote_ip,
+            )
+            connection.commit()
 
     def get_review(self, source: str, row_id: int) -> Dict[str, Any]:
         if source not in {"event", "tencent"}:
@@ -559,6 +750,10 @@ class AdminStore:
                         review["guild_id"], review["feed_id"],
                     ),
                 )
+                connection.execute(
+                    "UPDATE tencent_feed_cache SET deleted_at = ? WHERE guild_id = ? AND feed_id = ?",
+                    (now, review["guild_id"], review["feed_id"]),
+                )
             if cursor.rowcount < 1:
                 connection.rollback()
                 raise ValueError("审核记录不存在")
@@ -583,12 +778,13 @@ class AdminStore:
         error: str,
         reason: str,
         remote_ip: str = "",
+        target_channel_name: str = "",
     ) -> None:
         now = _utc_now()
         with self._lock, self._connect() as connection:
             connection.execute("BEGIN IMMEDIATE")
             row = connection.execute(
-                "SELECT channel_id, section, feed_id FROM tencent_moderation_findings WHERE id = ?",
+                "SELECT guild_id, channel_id, section, feed_id FROM tencent_moderation_findings WHERE id = ?",
                 (int(row_id),),
             ).fetchone()
             if row is None:
@@ -609,6 +805,22 @@ class AdminStore:
                         now,
                         reason,
                         int(row_id),
+                    ),
+                )
+                connection.execute(
+                    """
+                    UPDATE tencent_feed_cache
+                    SET channel_id = ?, channel_name = CASE WHEN ? <> '' THEN ? ELSE channel_name END,
+                        last_seen_at = ?
+                    WHERE guild_id = ? AND feed_id = ?
+                    """,
+                    (
+                        target_channel_id,
+                        target_channel_name,
+                        target_channel_name,
+                        now,
+                        row["guild_id"],
+                        row["feed_id"],
                     ),
                 )
             self._insert_audit(
@@ -729,6 +941,13 @@ class AdminStore:
                     version_key TEXT NOT NULL,
                     detail_json TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
+                    guild_name TEXT NOT NULL DEFAULT '',
+                    channel_name TEXT NOT NULL DEFAULT '',
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    summary_version_key TEXT NOT NULL DEFAULT '',
+                    first_seen_at TEXT NOT NULL DEFAULT '',
+                    last_seen_at TEXT NOT NULL DEFAULT '',
+                    deleted_at TEXT,
                     PRIMARY KEY(guild_id, feed_id)
                 );
 
@@ -768,6 +987,16 @@ class AdminStore:
                 "cached_feeds": "INTEGER NOT NULL DEFAULT 0",
             }.items():
                 self._ensure_column(connection, "tencent_scan_runs", column, declaration)
+            for column, declaration in {
+                "guild_name": "TEXT NOT NULL DEFAULT ''",
+                "channel_name": "TEXT NOT NULL DEFAULT ''",
+                "summary_json": "TEXT NOT NULL DEFAULT '{}'",
+                "summary_version_key": "TEXT NOT NULL DEFAULT ''",
+                "first_seen_at": "TEXT NOT NULL DEFAULT ''",
+                "last_seen_at": "TEXT NOT NULL DEFAULT ''",
+                "deleted_at": "TEXT",
+            }.items():
+                self._ensure_column(connection, "tencent_feed_cache", column, declaration)
 
     def _connect(self) -> sqlite3.Connection:
         connection = sqlite3.connect(str(self.database_path), timeout=15)
@@ -803,6 +1032,39 @@ class AdminStore:
         item["guilds"] = _json(item.pop("guilds_json", "[]"), [])
         item["classification"] = _json(item.pop("classification_json", "{}"), {})
         return item
+
+    @staticmethod
+    def _content_row(row: sqlite3.Row) -> Dict[str, Any]:
+        raw = dict(row)
+        detail = _json(raw.pop("detail_json", "{}"), {})
+        summary = _json(raw.pop("summary_json", "{}"), {})
+        merged = dict(summary)
+        merged.update({key: value for key, value in detail.items() if value not in (None, "", [], {})})
+        content_richtext = merged.get("content_richtext") or {}
+        reasons = _json(raw.pop("reasons_json", "[]"), [])
+        return {
+            **raw,
+            "feed_id": raw.get("feed_id", ""),
+            "guild_name": raw.get("guild_name") or merged.get("guild_name") or raw.get("guild_id", ""),
+            "channel_name": raw.get("channel_name") or merged.get("channel_name") or "未命名栏目",
+            "title": str(merged.get("title") or "无标题内容"),
+            "body": str(merged.get("content") or merged.get("content_snippet") or ""),
+            "author_id": str(merged.get("author_id") or ""),
+            "author_name": str(merged.get("author") or merged.get("author_name") or "频道用户"),
+            "feed_type": int(merged.get("feed_type") or 1),
+            "is_markdown": bool(merged.get("is_markdown") or content_richtext.get("is_markdown")),
+            "create_time_raw": str(merged.get("create_time_raw") or ""),
+            "source_created_at": str(merged.get("create_time") or merged.get("create_time_raw") or ""),
+            "share_url": str(merged.get("share_url") or ""),
+            "images": list(merged.get("images") or []),
+            "reasons": reasons,
+            "action": raw.get("action") or "allow",
+            "risk_level": raw.get("risk_level") or "low",
+            "risk_score": int(raw.get("risk_score") or 0),
+            "review_status": raw.get("review_status") or "not_required",
+            "delete_status": raw.get("delete_status") or ("deleted" if raw.get("deleted_at") else "not_requested"),
+            "sync_complete": bool(detail),
+        }
 
     @staticmethod
     def _insert_audit(

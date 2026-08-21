@@ -189,7 +189,7 @@ class TencentChannelMonitor:
         self._cached_feeds = 0
         self._initialize_audit()
 
-    def scan_once(self) -> ScanReport:
+    def scan_once(self, *, full_sync: bool = False) -> ScanReport:
         self._progress(5, "连接频道", "正在读取频道和栏目配置")
         started_at = _utc_now()
         total = 0
@@ -213,88 +213,49 @@ class TencentChannelMonitor:
         for settings in self.settings:
             guild_label = settings.name or settings.guild_id
             guild_names.append(guild_label)
+            channel_jobs = [
+                (section.display_name, channel_id)
+                for section, channel_id in settings.channels.items()
+            ] + [
+                (channel_name, channel_id)
+                for channel_name, channel_id in settings.auto_classify_channels.items()
+            ]
+            guild_feeds = self._list_guild_feeds(settings, full_sync=full_sync)
+            if guild_feeds is None:
+                feeds_by_channel = None
+            else:
+                total += len(guild_feeds)
+                feeds_by_channel: Dict[str, List[Dict[str, Any]]] = {}
+                for feed in guild_feeds:
+                    channel_id = self._resolve_channel_id(settings, feed)
+                    self._store_summary(settings, channel_id, feed)
+                    feeds_by_channel.setdefault(channel_id, []).append(feed)
 
-            for section, channel_id in settings.channels.items():
+            for channel_name, channel_id in channel_jobs:
                 self._progress(
                     10 + int(75 * completed_units / max(work_units, 1)),
                     "读取并分析内容",
-                    f"正在处理 {guild_label} · {section.display_name}",
+                    f"正在处理 {guild_label} · {channel_name}",
                 )
-                feeds = self._list_feeds(settings, channel_id)
-                total += len(feeds)
-                details: Dict[str, Dict[str, Any]] = {}
-                by_section: Dict[Section, List[Dict[str, Any]]] = {}
-                nearby_items: List[IncomingContent] = []
-                for feed in feeds:
-                    detail = self._detail(settings, channel_id, feed, details)
-                    classification = self._classify_feed(settings, channel_id, feed, detail)
-                    classification, feed_findings = self._analyze_finding(
-                        settings,
-                        channel_id,
-                        feed,
-                        detail,
-                        classification,
-                        nearby_items[-3:],
-                    )
-                    nearby_items.append(
-                        self._incoming_content(settings, channel_id, feed, detail)
-                    )
-                    moderation_findings.extend(feed_findings)
-                    by_section.setdefault(classification.section, []).append(feed)
-                    key = f"{guild_label}:{classification.section.value}"
-                    classification_counts[key] = classification_counts.get(key, 0) + 1
-                    if "missing_weekly_hashtag" in classification.validation_issues:
-                        weekly_missing += 1
-                for detected_section, section_feeds in by_section.items():
-                    findings.extend(
-                        self._find_duplicates(
-                            settings, channel_id, detected_section, section_feeds, details
-                        )
-                    )
-                completed_units += 1
-
-            for _channel_name, channel_id in settings.auto_classify_channels.items():
-                self._progress(
-                    10 + int(75 * completed_units / max(work_units, 1)),
-                    "读取并分析内容",
-                    f"正在处理 {guild_label} · {_channel_name}",
+                if feeds_by_channel is None:
+                    feeds = self._list_feeds(settings, channel_id)
+                    total += len(feeds)
+                else:
+                    feeds = sorted(
+                        feeds_by_channel.get(channel_id, []),
+                        key=lambda feed: int(feed.get("create_time_raw") or 0),
+                        reverse=True,
+                    )[: settings.scan_count]
+                channel_weekly, channel_duplicates, channel_findings = self._process_channel(
+                    settings,
+                    channel_id,
+                    feeds,
+                    guild_label,
+                    classification_counts,
                 )
-                feeds = self._list_feeds(settings, channel_id)
-                total += len(feeds)
-                details: Dict[str, Dict[str, Any]] = {}
-                by_section: Dict[Section, List[Dict[str, Any]]] = {}
-                nearby_items = []
-                for feed in feeds:
-                    detail = self._detail(settings, channel_id, feed, details)
-                    result = self._classify_feed(settings, channel_id, feed, detail)
-                    result, feed_findings = self._analyze_finding(
-                        settings,
-                        channel_id,
-                        feed,
-                        detail,
-                        result,
-                        nearby_items[-3:],
-                    )
-                    nearby_items.append(
-                        self._incoming_content(settings, channel_id, feed, detail)
-                    )
-                    section = result.section
-                    by_section.setdefault(section, []).append(feed)
-                    key = f"{guild_label}:{section.value}"
-                    classification_counts[key] = classification_counts.get(key, 0) + 1
-                    if "missing_weekly_hashtag" in result.validation_issues:
-                        weekly_missing += 1
-                    moderation_findings.extend(feed_findings)
-                for section, section_feeds in by_section.items():
-                    findings.extend(
-                        self._find_duplicates(
-                            settings,
-                            channel_id,
-                            section,
-                            section_feeds,
-                            details,
-                        )
-                    )
+                weekly_missing += channel_weekly
+                findings.extend(channel_duplicates)
+                moderation_findings.extend(channel_findings)
                 completed_units += 1
 
         self._progress(88, "确定性去重", "正在汇总严格重复项与栏目判定")
@@ -320,7 +281,9 @@ class TencentChannelMonitor:
         return report
 
     def run_forever(self) -> None:
+        base_delay = min(settings.poll_interval_seconds for settings in self.settings)
         while True:
+            delay = base_delay
             try:
                 with ScanLock(self.database_path) as acquired:
                     if acquired:
@@ -335,21 +298,21 @@ class TencentChannelMonitor:
                             flush=True,
                         )
             except Exception as exc:
+                if _is_rate_limit_error(exc):
+                    delay = max(base_delay, 1800)
                 print(
                     json.dumps(
                         {
                             "status": "failed",
                             "reason": "scan_error",
                             "error": str(exc)[:500],
-                            "retry_after_seconds": min(
-                                settings.poll_interval_seconds for settings in self.settings
-                            ),
+                            "retry_after_seconds": delay,
                         },
                         ensure_ascii=False,
                     ),
                     flush=True,
                 )
-            time.sleep(min(settings.poll_interval_seconds for settings in self.settings))
+            time.sleep(delay)
 
     def _progress(self, percent: int, phase: str, message: str) -> None:
         if self.progress_callback is not None:
@@ -372,6 +335,30 @@ class TencentChannelMonitor:
                 channel_id,
                 settings.scan_count,
             )
+        feeds = sorted(
+            feeds,
+            key=lambda feed: int(feed.get("create_time_raw") or 0),
+            reverse=True,
+        )
+        for feed in feeds:
+            self._store_summary(settings, channel_id, feed)
+        return feeds
+
+    def _list_guild_feeds(
+        self,
+        settings: TencentChannelSettings,
+        *,
+        full_sync: bool,
+    ) -> Optional[List[Dict[str, Any]]]:
+        incremental = getattr(self.api, "list_guild_feeds_incremental", None)
+        if not callable(incremental):
+            return None
+        feeds = incremental(
+            settings.guild_id,
+            max(settings.scan_count, 100),
+            () if full_sync else self._known_feed_ids(settings.guild_id, ""),
+            full_sync=full_sync,
+        )
         return sorted(
             feeds,
             key=lambda feed: int(feed.get("create_time_raw") or 0),
@@ -380,14 +367,113 @@ class TencentChannelMonitor:
 
     def _known_feed_ids(self, guild_id: str, channel_id: str) -> Tuple[str, ...]:
         with sqlite3.connect(str(self.database_path)) as connection:
-            rows = connection.execute(
-                """
-                SELECT feed_id FROM tencent_feed_cache
-                WHERE guild_id = ? AND channel_id = ?
-                """,
-                (guild_id, channel_id),
-            ).fetchall()
+            if channel_id:
+                rows = connection.execute(
+                    """
+                    SELECT feed_id FROM tencent_feed_cache
+                    WHERE guild_id = ? AND channel_id = ?
+                    """,
+                    (guild_id, channel_id),
+                ).fetchall()
+            else:
+                rows = connection.execute(
+                    "SELECT feed_id FROM tencent_feed_cache WHERE guild_id = ?",
+                    (guild_id,),
+                ).fetchall()
         return tuple(str(row[0]) for row in rows)
+
+    def _resolve_channel_id(
+        self,
+        settings: TencentChannelSettings,
+        feed: Mapping[str, Any],
+    ) -> str:
+        explicit_id = str(feed.get("channel_id") or "").strip()
+        configured_ids = {
+            *settings.channels.values(),
+            *settings.auto_classify_channels.values(),
+        }
+        if explicit_id:
+            return explicit_id
+
+        source_name = _normalize_channel_name(feed.get("channel_name"))
+        if not source_name:
+            return ""
+
+        names_by_id: Dict[str, set[str]] = {
+            channel_id: set() for channel_id in configured_ids
+        }
+        for section, channel_id in settings.channels.items():
+            names_by_id[channel_id].add(_normalize_channel_name(section.display_name))
+        for channel_name, channel_id in settings.auto_classify_channels.items():
+            names_by_id[channel_id].add(_normalize_channel_name(channel_name))
+        for channel_id, policy in self.config.board_policies.items():
+            if channel_id not in names_by_id:
+                continue
+            policy_name = str(policy.name or "")
+            names_by_id[channel_id].add(_normalize_channel_name(policy_name))
+            for separator in ("·", "|", "/", "-", "—", ":", "："):
+                if separator in policy_name:
+                    names_by_id[channel_id].add(
+                        _normalize_channel_name(policy_name.rsplit(separator, 1)[-1])
+                    )
+
+        exact_matches = [
+            channel_id
+            for channel_id, names in names_by_id.items()
+            if source_name in names
+        ]
+        if len(exact_matches) == 1:
+            return exact_matches[0]
+
+        fuzzy_matches = [
+            channel_id
+            for channel_id, names in names_by_id.items()
+            if any(
+                len(name) >= 2 and (name in source_name or source_name in name)
+                for name in names
+            )
+        ]
+        if len(fuzzy_matches) == 1:
+            return fuzzy_matches[0]
+        return ""
+
+    def _process_channel(
+        self,
+        settings: TencentChannelSettings,
+        channel_id: str,
+        feeds: Sequence[Dict[str, Any]],
+        guild_label: str,
+        classification_counts: Dict[str, int],
+    ) -> Tuple[int, List[DuplicateFinding], List[ModerationFinding]]:
+        weekly_missing = 0
+        moderation_findings: List[ModerationFinding] = []
+        details: Dict[str, Dict[str, Any]] = {}
+        by_section: Dict[Section, List[Dict[str, Any]]] = {}
+        nearby_items: List[IncomingContent] = []
+        for feed in feeds:
+            detail = self._detail(settings, channel_id, feed, details)
+            classification = self._classify_feed(settings, channel_id, feed, detail)
+            classification, feed_findings = self._analyze_finding(
+                settings,
+                channel_id,
+                feed,
+                detail,
+                classification,
+                nearby_items[-3:],
+            )
+            nearby_items.append(self._incoming_content(settings, channel_id, feed, detail))
+            moderation_findings.extend(feed_findings)
+            by_section.setdefault(classification.section, []).append(feed)
+            key = f"{guild_label}:{classification.section.value}"
+            classification_counts[key] = classification_counts.get(key, 0) + 1
+            if "missing_weekly_hashtag" in classification.validation_issues:
+                weekly_missing += 1
+        duplicate_findings: List[DuplicateFinding] = []
+        for section, section_feeds in by_section.items():
+            duplicate_findings.extend(
+                self._find_duplicates(settings, channel_id, section, section_feeds, details)
+            )
+        return weekly_missing, duplicate_findings, moderation_findings
 
     def _detail(
         self,
@@ -451,12 +537,69 @@ class TencentChannelMonitor:
             ).fetchone()
         if not row:
             return None, "new"
+        if not str(row[0]) or str(row[1]).strip() in {"", "{}", "null"}:
+            return None, "new"
         if str(row[0]) != version_key:
             return None, "updated"
         try:
             return dict(json.loads(row[1])), "cached"
         except (TypeError, ValueError, json.JSONDecodeError):
             return None, "updated"
+
+    def _store_summary(
+        self,
+        settings: TencentChannelSettings,
+        channel_id: str,
+        feed: Mapping[str, Any],
+    ) -> None:
+        feed_id = str(feed.get("feed_id") or "")
+        if not feed_id:
+            return
+        channel_name = str(feed.get("channel_name") or "")
+        if not channel_name:
+            for section, configured_id in settings.channels.items():
+                if configured_id == channel_id:
+                    channel_name = section.display_name
+                    break
+        if not channel_name:
+            channel_name = next(
+                (
+                    name
+                    for name, configured_id in settings.auto_classify_channels.items()
+                    if configured_id == channel_id
+                ),
+                "未命名栏目",
+            )
+        now = _utc_now()
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                INSERT INTO tencent_feed_cache
+                (guild_id, channel_id, feed_id, version_key, detail_json, fetched_at,
+                 guild_name, channel_name, summary_json, summary_version_key,
+                 first_seen_at, last_seen_at, deleted_at)
+                VALUES (?, ?, ?, '', '{}', ?, ?, ?, ?, ?, ?, ?, NULL)
+                ON CONFLICT(guild_id, feed_id) DO UPDATE SET
+                    channel_id = excluded.channel_id,
+                    guild_name = CASE WHEN excluded.guild_name <> '' THEN excluded.guild_name ELSE tencent_feed_cache.guild_name END,
+                    channel_name = CASE WHEN excluded.channel_name <> '' THEN excluded.channel_name ELSE tencent_feed_cache.channel_name END,
+                    summary_json = excluded.summary_json,
+                    summary_version_key = excluded.summary_version_key,
+                    last_seen_at = excluded.last_seen_at
+                """,
+                (
+                    settings.guild_id,
+                    channel_id,
+                    feed_id,
+                    now,
+                    settings.name or settings.guild_id,
+                    channel_name,
+                    json.dumps(dict(feed), ensure_ascii=False, sort_keys=True),
+                    self._feed_version(feed),
+                    now,
+                    now,
+                ),
+            )
 
     def _store_detail(
         self,
@@ -476,7 +619,8 @@ class TencentChannelMonitor:
                     channel_id = excluded.channel_id,
                     version_key = excluded.version_key,
                     detail_json = excluded.detail_json,
-                    fetched_at = excluded.fetched_at
+                    fetched_at = excluded.fetched_at,
+                    last_seen_at = excluded.fetched_at
                 """,
                 (
                     guild_id,
@@ -778,6 +922,13 @@ class TencentChannelMonitor:
                     version_key TEXT NOT NULL,
                     detail_json TEXT NOT NULL,
                     fetched_at TEXT NOT NULL,
+                    guild_name TEXT NOT NULL DEFAULT '',
+                    channel_name TEXT NOT NULL DEFAULT '',
+                    summary_json TEXT NOT NULL DEFAULT '{}',
+                    summary_version_key TEXT NOT NULL DEFAULT '',
+                    first_seen_at TEXT NOT NULL DEFAULT '',
+                    last_seen_at TEXT NOT NULL DEFAULT '',
+                    deleted_at TEXT,
                     PRIMARY KEY(guild_id, feed_id)
                 );
                 """
@@ -795,6 +946,16 @@ class TencentChannelMonitor:
             self._ensure_column(connection, "tencent_scan_runs", "new_feeds", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "updated_feeds", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "cached_feeds", "INTEGER NOT NULL DEFAULT 0")
+            for column, declaration in {
+                "guild_name": "TEXT NOT NULL DEFAULT ''",
+                "channel_name": "TEXT NOT NULL DEFAULT ''",
+                "summary_json": "TEXT NOT NULL DEFAULT '{}'",
+                "summary_version_key": "TEXT NOT NULL DEFAULT ''",
+                "first_seen_at": "TEXT NOT NULL DEFAULT ''",
+                "last_seen_at": "TEXT NOT NULL DEFAULT ''",
+                "deleted_at": "TEXT",
+            }.items():
+                self._ensure_column(connection, "tencent_feed_cache", column, declaration)
             self._ensure_column(
                 connection,
                 "tencent_duplicate_actions",
@@ -1006,6 +1167,15 @@ def _normalize(value: Any) -> str:
     return " ".join(text.split())
 
 
+def _normalize_channel_name(value: Any) -> str:
+    text = unicodedata.normalize("NFKC", str(value or "")).casefold()
+    return "".join(
+        character
+        for character in text
+        if unicodedata.category(character)[0] not in {"P", "S", "Z", "C"}
+    )
+
+
 def _stable_media(media: Sequence[Any]) -> List[Any]:
     stable: List[Any] = []
     for value in media:
@@ -1024,3 +1194,8 @@ def _stable_media(media: Sequence[Any]) -> List[Any]:
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _is_rate_limit_error(exc: Exception) -> bool:
+    value = str(exc).casefold()
+    return "retcode=153" in value or "频率上限" in value or "rate limit" in value

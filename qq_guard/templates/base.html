@@ -14,12 +14,13 @@
       <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i class="ri-shield-check-line" aria-hidden="true"></i></span><span><strong>腾讯频道治理</strong></span></a>
       <nav aria-label="主要导航">
         <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><i class="ri-calendar-check-line" aria-hidden="true"></i><span>待办工作台</span>{% if request.endpoint == 'dashboard' and summary is defined %}<b>{{ summary.pending }}</b>{% endif %}</a>
-        <a class="nav-link {{ 'active' if request.endpoint in ['reviews','review_detail','ai_analysis','placements','confirm_delete','confirm_bulk_delete','confirm_bulk_move'] }}" href="{{ url_for('reviews') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span>内容处理</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['contents','edit_content','delete_content','move_content'] }}" href="{{ url_for('contents') }}"><i class="ri-file-list-3-line" aria-hidden="true"></i><span>全部内容</span></a>
+        <a class="nav-link {{ 'active' if request.endpoint in ['reviews','review_detail','ai_analysis','placements','confirm_delete','confirm_bulk_delete','confirm_bulk_move'] }}" href="{{ url_for('reviews') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span>内容审核</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['official_capabilities','official_capability'] }}" href="{{ url_for('official_capabilities') }}"><i class="ri-edit-box-line" aria-hidden="true"></i><span>频道管理</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['rules','channels','test_content'] }}" href="{{ url_for('rules') }}"><i class="ri-settings-3-line" aria-hidden="true"></i><span>规则与栏目</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['audit','duplicates'] }}" href="{{ url_for('audit') }}"><i class="ri-history-line" aria-hidden="true"></i><span>操作记录</span></a>
       </nav>
-      <div class="sidebar-help"><i class="ri-shield-user-line" aria-hidden="true"></i><span><strong>每次操作都由你确认</strong><small>系统只给建议，删除和修改不会自动发生</small></span></div>
+      <div class="sidebar-help"><i class="ri-shield-user-line" aria-hidden="true"></i><span><strong>登录后直接管理</strong><small>编辑、移动和删除都会留下操作记录</small></span></div>
       <div class="channel-switcher"><span>当前频道</span>{% if nav_guilds %}<details><summary><i class="ri-community-line" aria-hidden="true"></i><strong>{{ nav_guilds[0].name }}</strong><i class="ri-arrow-down-s-line" aria-hidden="true"></i></summary><div>{% for guild in nav_guilds %}<a href="{{ url_for('reviews', guild=guild.id) }}">{{ guild.name }}</a>{% endfor %}</div></details>{% else %}<strong>尚未配置频道</strong>{% endif %}</div>
       <form class="logout-form" action="{{ url_for('logout') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button type="submit"><i class="ri-logout-box-r-line" aria-hidden="true"></i>退出登录</button></form>
     </aside>

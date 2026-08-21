@@ -132,4 +132,4 @@ qq-guard --config config.json audit --review-only
 qq-guard --config config.json dashboard
 ```
 
-正式做网页时，服务端应增加登录、角色权限、CSRF 防护、操作二次确认和不可篡改审计日志；不能把本地 SQLite 或腾讯凭据直接暴露给浏览器。
+正式网页必须具备登录、角色权限、CSRF 防护和不可篡改审计日志；不能把本地 SQLite 或腾讯凭据直接暴露给浏览器。人工编辑、移动和删除由已登录管理员直接提交，自动处置仍受独立开关限制。

@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}全部内容 · 腾讯频道治理{% endblock %}
+{% block heading %}全部内容{% endblock %}
+{% block page_intro %}<p class="page-subtitle">这里显示已从腾讯频道同步的帖子和文章，包括没有问题的内容</p>{% endblock %}
+{% block topbar_extra %}<form action="{{ url_for('scan_now') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit"><i class="ri-refresh-line" aria-hidden="true"></i>立即同步</button></form>{% endblock %}
+{% block content %}
+<section class="panel filter-panel">
+  <form method="get" class="filter-form">
+    <label>搜索<input name="q" value="{{ query }}" placeholder="标题、正文、作者"></label>
+    <label>频道<select name="guild"><option value="">全部频道</option>{% for guild in nav_guilds %}<option value="{{ guild.id }}" {{ 'selected' if selected_guild == guild.id }}>{{ guild.name }}</option>{% endfor %}</select></label>
+    <label>栏目<select name="channel"><option value="">全部栏目</option>{% for channel_id, channel_name in channels %}<option value="{{ channel_id }}" {{ 'selected' if selected_channel == channel_id }}>{{ channel_name }}</option>{% endfor %}</select></label>
+    <button class="primary-button compact" type="submit">筛选</button>
+  </form>
+</section>
+
+<section class="content-catalog-heading">
+  <div><h2>已同步 {{ total_items }} 条</h2><p>编辑、移动和删除会直接作用到腾讯频道，不需要再次输入密码或填写理由。</p></div>
+  <a href="{{ url_for('reviews') }}">只看需要审核的内容</a>
+</section>
+
+<section class="content-catalog">
+  {% for item in items %}
+  <article class="content-item">
+    <header>
+      <div class="content-title"><span class="content-type">{{ '文章' if item.feed_type == 2 else '帖子' }}</span><h2>{{ item.title }}</h2></div>
+      {% if item.finding_id %}<span class="risk-pill risk-{{ item.risk_level }}">{{ action_labels.get(item.action, item.action) }}</span>{% else %}<span class="risk-pill risk-low">没有发现问题</span>{% endif %}
+    </header>
+    <div class="content-meta">
+      <span><i class="ri-community-line" aria-hidden="true"></i>{{ item.guild_name }}</span>
+      <span><i class="ri-layout-grid-line" aria-hidden="true"></i>{{ item.channel_name }}</span>
+      <span><i class="ri-user-3-line" aria-hidden="true"></i>{{ item.author_name }}</span>
+      <span><i class="ri-time-line" aria-hidden="true"></i>{{ item.source_created_at }}</span>
+      <span class="sync-state"><i class="ri-checkbox-circle-line" aria-hidden="true"></i>{{ '正文已同步' if item.sync_complete else '列表已同步' }}</span>
+    </div>
+    <p class="content-preview">{{ item.body|striptags|truncate(220) or '这条内容暂时没有正文摘要。' }}</p>
+    <div class="content-actions">
+      <details class="content-edit">
+        <summary class="secondary-button compact"><i class="ri-edit-line" aria-hidden="true"></i>编辑</summary>
+        <form action="{{ url_for('edit_content', guild_id=item.guild_id, feed_id=item.feed_id) }}" method="post" class="stack-form">
+          <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+          <label>标题<input name="title" value="{{ item.title }}" maxlength="500"></label>
+          <label>正文<textarea name="body" rows="10" maxlength="50000">{{ item.body }}</textarea></label>
+          <button class="primary-button" type="submit">保存修改</button>
+        </form>
+      </details>
+      <form action="{{ url_for('move_content', guild_id=item.guild_id, feed_id=item.feed_id) }}" method="post" class="content-move-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <select name="move_target" aria-label="移动到栏目" required><option value="">移动到…</option>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}">{{ target.label }}</option>{% endfor %}</select>
+        <button class="ghost-button compact" type="submit"><i class="ri-drag-move-2-line" aria-hidden="true"></i>移动</button>
+      </form>
+      {% if item.share_url %}<a class="ghost-button compact" href="{{ item.share_url }}" target="_blank" rel="noopener"><i class="ri-external-link-line" aria-hidden="true"></i>打开原帖</a>{% endif %}
+      <form action="{{ url_for('delete_content', guild_id=item.guild_id, feed_id=item.feed_id) }}" method="post" class="content-delete-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <button class="danger-button compact" type="submit" {{ 'disabled' if not manual_delete_enabled }}><i class="ri-delete-bin-line" aria-hidden="true"></i>删除</button>
+      </form>
+    </div>
+  </article>
+  {% else %}
+  <div class="queue-empty"><i class="ri-file-search-line" aria-hidden="true"></i><strong>没有找到内容</strong><p>请调整筛选条件，或返回工作台执行一次同步。</p></div>
+  {% endfor %}
+</section>
+
+{% if total_pages > 1 %}<nav class="pagination" aria-label="全部内容翻页">{% if page > 1 %}<a class="secondary-button compact" href="{{ url_for('contents', guild=selected_guild, channel=selected_channel, q=query, page=page-1) }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ total_pages }} 页</span>{% if page < total_pages %}<a class="secondary-button compact" href="{{ url_for('contents', guild=selected_guild, channel=selected_channel, q=query, page=page+1) }}">下一页</a>{% endif %}</nav>{% endif %}
+{% endblock %}

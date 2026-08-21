@@ -41,6 +41,31 @@ class FakeTencentApi:
         return {"success": True}
 
 
+class FakeGuildTencentApi(FakeTencentApi):
+    def __init__(self, guild_feeds, details):
+        super().__init__({}, details)
+        self.guild_feeds = guild_feeds
+        self.guild_list_calls = []
+        self.detail_calls = []
+
+    def list_guild_feeds_incremental(
+        self,
+        guild_id,
+        count=100,
+        known_feed_ids=None,
+        *,
+        full_sync=False,
+    ):
+        self.guild_list_calls.append(
+            (guild_id, count, tuple(known_feed_ids or ()), full_sync)
+        )
+        return list(self.guild_feeds.get(guild_id, []))
+
+    def get_feed_detail(self, guild_id, channel_id, feed_id):
+        self.detail_calls.append((guild_id, channel_id, feed_id))
+        return super().get_feed_detail(guild_id, channel_id, feed_id)
+
+
 class TencentMonitorTests(unittest.TestCase):
     def setUp(self):
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -68,6 +93,7 @@ class TencentMonitorTests(unittest.TestCase):
                         "enabled": True,
                         "guild_id": "100",
                         "channels": {
+                            "practical_article": "202",
                             "qa_discussion": "200",
                             "weekly_question": "201"
                         },
@@ -228,6 +254,51 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertEqual(report.duplicate_findings[0].section, "qa_discussion")
         self.assertEqual(report.duplicate_findings[0].delete_status, "detected_only")
         self.assertEqual(api.deletions, [])
+
+    def test_guild_timeline_resolves_channel_names_without_channel_ids(self):
+        practical = self.feed("B_article", "u1", "架构案例", "实用文章内容", 20)
+        practical["channel_name"] = "实用文章"
+        weekly = self.feed("B_weekly", "u2", "每周一问", "本周问题", 10)
+        weekly["channel_name"] = "🎁每周一问"
+        api = FakeGuildTencentApi(
+            {"100": [practical, weekly]},
+            {
+                "B_article": self.detail("架构案例", "实用文章内容"),
+                "B_weekly": self.detail("每周一问", "本周问题", topics=["每周一问"]),
+            },
+        )
+
+        report = TencentChannelMonitor(self.config(), api).scan_once(full_sync=True)
+
+        self.assertEqual(report.scanned_feeds, 2)
+        self.assertEqual(
+            api.detail_calls,
+            [
+                ("100", "202", "B_article"),
+                ("100", "201", "B_weekly"),
+            ],
+        )
+        self.assertEqual(api.list_calls, [])
+        self.assertEqual(api.guild_list_calls[0][3], True)
+
+        import sqlite3
+
+        database_path = Path(self.temp_dir.name) / "audit.sqlite3"
+        with sqlite3.connect(database_path) as connection:
+            rows = connection.execute(
+                """
+                SELECT feed_id, channel_id, channel_name
+                FROM tencent_feed_cache
+                ORDER BY feed_id
+                """
+            ).fetchall()
+        self.assertEqual(
+            rows,
+            [
+                ("B_article", "202", "实用文章"),
+                ("B_weekly", "201", "🎁每周一问"),
+            ],
+        )
 
     def test_sensitive_term_is_reported_without_delete(self):
         feeds = {

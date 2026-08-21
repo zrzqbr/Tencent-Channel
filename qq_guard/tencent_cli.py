@@ -22,7 +22,7 @@ class TencentCliClient:
         timeout_seconds: int = 30,
         min_interval_seconds: float = 0.4,
         credential_home: Optional[str] = None,
-        rate_limit_retry_seconds: float = 70.0,
+        rate_limit_retry_seconds: float = 5.0,
     ) -> None:
         resolved = shutil.which(executable)
         if not resolved:
@@ -148,6 +148,69 @@ class TencentCliClient:
             cursor = next_cursor
         return feeds
 
+    def list_guild_feeds_incremental(
+        self,
+        guild_id: str,
+        count: int = 100,
+        known_feed_ids: Optional[Sequence[str]] = None,
+        *,
+        full_sync: bool = False,
+    ) -> List[Dict[str, Any]]:
+        """Read a guild-wide timeline with fewer official API calls.
+
+        The guild timeline includes the source channel for every feed, so one
+        paginated request replaces one request per configured board. A manual
+        full sync follows older pages; scheduled scans stop at a known feed.
+        """
+        target_count = 1000 if full_sync else max(100, min(int(count), 500))
+        safe_guild = self._digits(guild_id, "guild_id")
+        known = {str(value) for value in (known_feed_ids or ()) if str(value)}
+        feeds: List[Dict[str, Any]] = []
+        seen_ids = set()
+        seen_cursors = set()
+        cursor = ""
+        while len(feeds) < target_count:
+            page_count = min(100, target_count - len(feeds))
+            arguments = [
+                "feed",
+                "get-guild-feeds",
+                "--guild-id",
+                safe_guild,
+                "--get-type",
+                "2",
+                "--count",
+                str(page_count),
+            ]
+            if cursor:
+                arguments.extend(["--feed-attach-info", cursor])
+            arguments.append("--json")
+            payload = self._run(arguments, retries=0)
+            data = payload.get("data") or {}
+            page = list(data.get("feeds") or [])
+            page_reached_watermark = False
+            for feed in page:
+                feed_id = str(feed.get("feed_id") or "")
+                if feed_id and feed_id in seen_ids:
+                    continue
+                if feed_id:
+                    seen_ids.add(feed_id)
+                    if feed_id in known:
+                        page_reached_watermark = True
+                feeds.append(dict(feed))
+                if len(feeds) >= target_count:
+                    break
+            next_cursor = str(data.get("feed_attach_info") or "")
+            if (
+                (page_reached_watermark and not full_sync)
+                or not data.get("has_more")
+                or not next_cursor
+                or next_cursor in seen_cursors
+            ):
+                break
+            seen_cursors.add(next_cursor)
+            cursor = next_cursor
+        return feeds
+
     def version(self) -> str:
         payload = self._run(["version", "--json"])
         return str((payload.get("data") or {}).get("version") or "")
@@ -257,6 +320,34 @@ class TencentCliClient:
                 "--json",
             ],
             retries=3,
+        )
+
+    def alter_feed(
+        self,
+        guild_id: str,
+        channel_id: str,
+        feed_id: str,
+        create_time: str,
+        feed_type: int,
+        title: str,
+        content: str,
+        *,
+        markdown: bool = False,
+    ) -> Dict[str, Any]:
+        parameters: Dict[str, Any] = {
+            "feed_id": self._feed_id(feed_id),
+            "guild_id": self._digits(guild_id, "guild_id"),
+            "channel_id": self._digits(channel_id, "channel_id"),
+            "create_time": self._timestamp(create_time),
+            "feed_type": 2 if int(feed_type or 1) == 2 else 1,
+            "title": str(title)[:500],
+        }
+        parameters["markdown_content" if markdown else "content"] = str(content)[:50000]
+        return self.execute_capability(
+            "feed",
+            "alter-feed",
+            parameters,
+            confirmed=True,
         )
 
     def _run(

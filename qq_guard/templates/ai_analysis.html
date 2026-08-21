@@ -2,7 +2,7 @@
 {% block title %}判断记录 · 腾讯频道治理{% endblock %}
 {% block heading %}判断记录{% endblock %}
 {% block page_intro %}<p class="page-subtitle">查看系统为什么这样判断，以及管理员下一步怎么做</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容处理</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容审核</a>{% endblock %}
 {% block content %}
 {% if ai_status.status != 'ready' %}<section class="info-banner warning-banner"><strong>部分内容需要人工核对</strong><p>智能判断当前没有完整运行。已有的基础检查仍会保留，但不会自动处理任何内容。</p></section>{% endif %}
 

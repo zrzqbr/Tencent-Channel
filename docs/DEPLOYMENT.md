@@ -23,7 +23,7 @@
 2. 后续如增加审核员账号，应拆分管理员与审核员权限；当前仅提供单一管理员入口。
 3. 真实自动删帖仍需单独修改 `delete_mode` 和对应自动删除开关，不与网页上线联动。
 4. 在 `/etc/tencent-channel.env` 中配置 `TENCENT_TOKENHUB_API_KEY`，并在 TokenHub 控制台开通 `hy3` 与 `youtu-vita`；密钥不得进入仓库或网页配置。
-5. 官方能力中心的真实写操作由 `QQ_GUARD_OFFICIAL_WRITES_ENABLED=true` 单独开启；未设置时所有官方写入命令只能安全预演。即使开启，仍需管理员密码、至少 4 个字的原因和影响确认，高风险操作还需输入“确认执行”。
+5. 官方能力中心的真实写操作由 `QQ_GUARD_OFFICIAL_WRITES_ENABLED=true` 单独开启；未设置时写入按钮不可用。开启后，登录管理员提交即直接执行并自动写入操作记录。
 
 ## 验收标准
 

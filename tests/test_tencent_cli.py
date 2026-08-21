@@ -97,6 +97,35 @@ class TencentCliClientTests(unittest.TestCase):
         self.assertEqual([item["feed_id"] for item in feeds], ["new", "known"])
         self.assertEqual(run.call_count, 1)
 
+    def test_guild_listing_reduces_board_calls_and_follows_cursor(self):
+        pages = [
+            subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=json.dumps({
+                    "success": True,
+                    "data": {
+                        "feeds": [{"feed_id": "first", "channel_id": "10"}],
+                        "feed_attach_info": "next-page",
+                        "has_more": True,
+                    },
+                }), stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=[], returncode=0,
+                stdout=json.dumps({
+                    "success": True,
+                    "data": {"feeds": [{"feed_id": "second", "channel_id": "20"}], "has_more": False},
+                }), stderr="",
+            ),
+        ]
+        with patch("qq_guard.tencent_cli.shutil.which", return_value="/usr/bin/tencent-channel-cli"):
+            client = TencentCliClient(min_interval_seconds=0)
+        with patch("qq_guard.tencent_cli.subprocess.run", side_effect=pages) as run:
+            feeds = client.list_guild_feeds_incremental("123", full_sync=True)
+        self.assertEqual([item["feed_id"] for item in feeds], ["first", "second"])
+        self.assertIn("get-guild-feeds", run.call_args_list[0].args[0])
+        self.assertIn("next-page", run.call_args_list[1].args[0])
+
 
 if __name__ == "__main__":
     unittest.main()

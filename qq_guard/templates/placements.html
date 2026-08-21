@@ -2,7 +2,7 @@
 {% block title %}栏目调整 · 腾讯频道治理{% endblock %}
 {% block heading %}栏目调整{% endblock %}
 {% block page_intro %}<p class="page-subtitle">集中处理可能放错栏目的内容</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容处理</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容审核</a>{% endblock %}
 {% block content %}
 <section class="info-banner">
   <strong>确认后只移动原帖，不会重新发布</strong>
@@ -19,14 +19,14 @@
 {% for group in groups %}
 <section class="panel placement-group">
   <div class="panel-title"><div><h2>调整到：{{ group.target.guild_name }} · {{ group.target.label }}</h2><p>以下内容与这个栏目更匹配。</p></div><span class="pill">{{ group['items']|length }} 条</span></div>
-  <form action="{{ url_for('prepare_bulk_move') }}" method="post" data-bulk-form>
+  <form action="{{ url_for('execute_bulk_move') }}" method="post" data-bulk-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <input type="hidden" name="move_target" value="{{ group.target.key }}" data-move-target>
     <div class="bulk-toolbar">
       <label class="bulk-select-all"><input type="checkbox" data-select-all> 全选本组</label>
       <span>已选择 <strong data-selected-count>0</strong> 条</span>
       <button class="primary-button compact" type="submit" data-bulk-move disabled>调整所选内容</button>
-      <small>每次最多调整 20 条；下一步会再次确认。</small>
+      <small>每次最多调整 20 条；点击后直接同步到腾讯频道。</small>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>选择</th><th>内容</th><th>当前栏目</th><th>识别结论</th><th>建议目标</th><th>可核对理由</th></tr></thead>
