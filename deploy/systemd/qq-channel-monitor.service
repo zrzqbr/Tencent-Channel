@@ -1,5 +1,5 @@
 [Unit]
-Description=Tencent Channel Content Guard Monitor
+Description=Tencent Channel Content Guard Automatic Monitor (disabled by default)
 After=network-online.target
 Wants=network-online.target
 

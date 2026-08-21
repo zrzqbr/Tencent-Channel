@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import sqlite3
 import time
 import unicodedata
@@ -281,6 +282,19 @@ class TencentChannelMonitor:
         return report
 
     def run_forever(self) -> None:
+        if os.environ.get("QQ_GUARD_AUTO_SCAN_ENABLED", "false").casefold() != "true":
+            print(
+                json.dumps(
+                    {
+                        "status": "disabled",
+                        "reason": "manual_scan_only",
+                        "message": "自动巡检已关闭，请由管理员在工作台点击立即巡检",
+                    },
+                    ensure_ascii=False,
+                ),
+                flush=True,
+            )
+            return
         base_delay = min(settings.poll_interval_seconds for settings in self.settings)
         while True:
             delay = base_delay

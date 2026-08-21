@@ -302,10 +302,11 @@ class AdminStore:
         now = _utc_now()
         status = "failed" if error else "deleted"
         with self._lock, self._connect() as connection:
-            connection.execute(
-                "UPDATE tencent_feed_cache SET deleted_at = ? WHERE guild_id = ? AND feed_id = ?",
-                (now if not error else None, guild_id, feed_id),
-            )
+            if not error:
+                connection.execute(
+                    "UPDATE tencent_feed_cache SET deleted_at = ? WHERE guild_id = ? AND feed_id = ?",
+                    (now, guild_id, feed_id),
+                )
             connection.execute(
                 """
                 UPDATE tencent_moderation_findings

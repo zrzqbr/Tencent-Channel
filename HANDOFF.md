@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.7.0（全频道同步、完整内容目录与一步式人工操作）
+- Python 包版本：0.7.1（手动巡检、删除状态同步与今日处理工作台）
 
 ## 2. 当前生产快照
 
@@ -29,7 +29,7 @@ ssh root@150.158.77.134 'readlink /srv/tencent-channel/app/current'
 | 项目 | 状态 | 位置 |
 | --- | --- | --- |
 | 管理后台 | active | qq-channel-admin.service |
-| 持续巡检 | active | qq-channel-monitor.service |
+| 自动巡检 | inactive / disabled | qq-channel-monitor.service |
 | Nginx | active | /etc/nginx/conf.d/tencent-channel.conf |
 | 健康检查 | 正常 | https://tencent.ruitcarch.cloud/healthz |
 | QQ 官方 CLI | 已登录 | HOME=/srv/tencent-channel/home |
@@ -70,7 +70,7 @@ ai_model = hy3
 delete_mode = dry_run
 ~~~
 
-持续巡检每 300 秒运行一次，以上数字会继续变化。
+巡检只在管理员点击网页“立即巡检”后运行，平时不会自动刷新以上数字。
 
 ## 3. 生产路径
 
@@ -140,9 +140,9 @@ QQ 频道新内容
 - Token、Cookie、会话密钥、分页游标和 raw 字段不会显示在网页或审计详情。
 - 涉及服务器文件路径的命令暂不接受路径输入，必须以后接入受控上传区，避免任意文件读取。
 - 帖子列表现已跟随官方 `feed_attach_info` 分页，不再把第一页误认为全部结果。
-- 日常巡检优先使用全频道时间线，一次读取各栏目内容，并使用数据库帖子 ID 作为增量水位线；手动巡检会完整翻页同步历史列表。
+- 网页手动巡检使用全频道时间线，完整翻页读取各栏目内容，并使用数据库帖子 ID 作为增量水位线。
 - 全频道接口只返回栏目名称时，系统会自动映射到已配置的真实栏目 ID，兼容带表情和“频道名·栏目名”等名称。
-- 接口遇到频率限制时只短暂重试，仍失败则结束本轮；持续巡检会退避 30 分钟，避免反复消耗额度。
+- 接口遇到频率限制时只短暂重试，仍失败则结束本轮，避免反复消耗额度。
 - 腾讯接口直接超时时同一命令最多重试一次，不再按栏目长时间重复等待；失败结果会在巡检状态中明确显示。
 - 巡检新增本轮读取、新增、更新、缓存和累计收录五类统计。
 - 新增“全部内容”页面，正常帖子和待审核内容统一显示，可直接编辑、移动、打开原帖或删除。
@@ -189,7 +189,7 @@ QQ 频道新内容
 | qq_guard/placement.py | 可解释栏目调整建议 |
 | qq_guard/admin_store.py | SQLite 查询、审核、删除、移动和审计 |
 | qq_guard/scan_control.py | 跨进程巡检锁与进度 |
-| qq_guard/templates/dashboard.html | 今日待办工作台 |
+| qq_guard/templates/dashboard.html | 今日处理工作台 |
 | qq_guard/templates/review_detail.html | 完整审核详情 |
 | qq_guard/static/admin.css | 后台主样式 |
 | qq_guard/static/admin.js | 巡检进度、时间更新和批量操作 |
@@ -278,7 +278,7 @@ git rev-parse HEAD
 git status --short
 .venv/bin/python -m unittest discover -s tests -v
 git rev-parse HEAD
-ssh -o BatchMode=yes root@150.158.77.134 'systemctl is-active qq-channel-admin.service qq-channel-monitor.service nginx'
+ssh -o BatchMode=yes root@150.158.77.134 'systemctl is-active qq-channel-admin.service nginx; systemctl is-enabled qq-channel-monitor.service || true'
 ~~~
 
 ### 10.2 创建不可变 release
@@ -298,10 +298,12 @@ chown -R txa_deployer:txa_deployer \"\$release_dir\"
 /srv/tencent-channel/app/venv/bin/pip install --no-deps --quiet \"\$release_dir\"
 ln -sfn \"\$release_dir\" /srv/tencent-channel/app/current.new
 mv -Tf /srv/tencent-channel/app/current.new /srv/tencent-channel/app/current
-systemctl restart qq-channel-admin.service qq-channel-monitor.service
+systemctl restart qq-channel-admin.service
+systemctl disable --now qq-channel-monitor.service
 sleep 3
 readlink /srv/tencent-channel/app/current
-systemctl is-active qq-channel-admin.service qq-channel-monitor.service
+systemctl is-active qq-channel-admin.service
+systemctl is-enabled qq-channel-monitor.service || true
 curl -fsS http://127.0.0.1:8787/healthz
 "
 ~~~
@@ -311,7 +313,7 @@ curl -fsS http://127.0.0.1:8787/healthz
 - set -o pipefail 必须保留，防止 SSH 端失败而本地管道显示成功。
 - 不覆盖持久配置和数据库。
 - release 目录使用完整 Git SHA。
-- 管理后台从 current 加载；持续巡检使用共享 venv，所以发布时必须安装 release。
+- 管理后台从 current 加载并使用共享 venv，所以发布时必须安装 release。
 
 ### 10.3 发布后验证
 
@@ -321,10 +323,11 @@ release_sha=$(git rev-parse HEAD)
 ssh -o BatchMode=yes root@150.158.77.134 "
 set -e
 test \"\$(readlink /srv/tencent-channel/app/current)\" = \"/srv/tencent-channel/app/releases/$release_sha\"
-systemctl is-active qq-channel-admin.service qq-channel-monitor.service nginx
+systemctl is-active qq-channel-admin.service nginx
+systemctl is-enabled qq-channel-monitor.service || true
 curl -fsS http://127.0.0.1:8787/healthz
 sudo -u txa_deployer env HOME=/srv/tencent-channel/home tencent-channel-cli login status
-journalctl -u qq-channel-admin.service -u qq-channel-monitor.service --since '10 minutes ago' --no-pager | tail -120
+journalctl -u qq-channel-admin.service --since '10 minutes ago' --no-pager | tail -120
 "
 ~~~
 
@@ -339,7 +342,7 @@ journalctl -u qq-channel-admin.service -u qq-channel-monitor.service --since '10
 
 ### 10.4 回滚
 
-只改 current 软链接不够，因为持续巡检使用共享 venv：
+只改 current 软链接不够，因为管理后台使用共享 venv：
 
 ~~~bash
 old_sha='<已验证的旧完整SHA>'
@@ -350,7 +353,8 @@ test -d \"\$old_dir\"
 /srv/tencent-channel/app/venv/bin/pip install --no-deps --quiet \"\$old_dir\"
 ln -sfn \"\$old_dir\" /srv/tencent-channel/app/current.new
 mv -Tf /srv/tencent-channel/app/current.new /srv/tencent-channel/app/current
-systemctl restart qq-channel-admin.service qq-channel-monitor.service
+systemctl restart qq-channel-admin.service
+systemctl disable --now qq-channel-monitor.service
 sleep 3
 curl -fsS http://127.0.0.1:8787/healthz
 "
@@ -397,7 +401,8 @@ ssh -t root@150.158.77.134 \
 ~~~bash
 ssh root@150.158.77.134 '
 sudo -u txa_deployer env HOME=/srv/tencent-channel/home tencent-channel-cli login status
-systemctl restart qq-channel-admin.service qq-channel-monitor.service
+systemctl restart qq-channel-admin.service
+systemctl disable --now qq-channel-monitor.service
 '
 ~~~
 
@@ -439,7 +444,7 @@ QQ 官方 CLI 授权失效，不是 Hy3 的 TokenHub Key。按第 11 节处理�
 
 ### retCode=153 / 频率上限
 
-接口调用过快。读取类接口已有退避重试；网页和持续巡检共享 tencent-scan.lock。不要并发启动多轮巡检。
+接口调用过快。网页巡检使用 tencent-scan.lock 保证同一时间只有一轮任务。等待一段时间后再手动点击巡检。
 
 ### 最近巡检看似没更新
 
@@ -521,7 +526,7 @@ admin_audit_actions = 105
 
 ### P1：巡检调度
 
-1. 持续巡检基础间隔为 300 秒；遇到平台频率限制会退避 30 分钟。后续可在后台显示预计重试时间。
+1. 自动巡检已关闭；管理员点击“立即巡检”后执行单轮全频道同步。只有明确恢复自动模式时才设置 `QQ_GUARD_AUTO_SCAN_ENABLED=true` 并启用 monitor 服务。
 2. 已使用全频道时间线和增量水位线；后续继续观察实际额度消耗和分页完整性。
 3. 增加巡检历史页：开始、结束、耗时、内容数、AI 数、降级数和失败阶段。
 

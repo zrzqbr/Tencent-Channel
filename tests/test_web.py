@@ -12,6 +12,7 @@ from werkzeug.security import generate_password_hash
 
 from qq_guard.admin_store import AdminStore
 from qq_guard.scan_control import ScanLock
+from qq_guard.tencent_cli import TencentCliError
 from qq_guard.web import _cn_time, create_app
 
 
@@ -24,6 +25,8 @@ class FakeTencentClient:
         self.moved = []
         self.edited = []
         self.capability_calls = []
+        self.delete_error = None
+        self.detail_error = None
 
     def capability_index(self):
         return [
@@ -83,9 +86,13 @@ class FakeTencentClient:
 
     def delete_feed(self, guild_id, channel_id, feed_id, create_time, live):
         self.deleted.append((guild_id, channel_id, feed_id, create_time, live))
+        if self.delete_error is not None:
+            raise self.delete_error
         return {"success": True}
 
     def get_feed_detail(self, guild_id, channel_id, feed_id):
+        if self.detail_error is not None:
+            raise self.detail_error
         return {"create_time_raw": "123456"}
 
     def move_feed(self, guild_id, original_channel_id, target_channel_id, feed_id):
@@ -192,7 +199,7 @@ class WebTests(unittest.TestCase):
             follow_redirects=True,
         )
         self.assertEqual(response.status_code, 200)
-        self.assertIn("待办工作台".encode("utf-8"), response.data)
+        self.assertIn("今天要处理的内容".encode("utf-8"), response.data)
         return response
 
     def insert_tencent_review(
@@ -269,22 +276,20 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
-        self.assertIn("已读取新内容".encode("utf-8"), response.data)
-        self.assertIn("已检查风险".encode("utf-8"), response.data)
-        self.assertIn("等待智能判断".encode("utf-8"), response.data)
-        self.assertIn("等你确认".encode("utf-8"), response.data)
+        self.assertIn("只在你点击后巡检".encode("utf-8"), response.data)
+        self.assertIn("今天要处理的内容".encode("utf-8"), response.data)
         self.assertIn("全部内容".encode("utf-8"), response.data)
         self.assertIn("内容审核".encode("utf-8"), response.data)
 
     def test_dashboard_exposes_task_queues_and_review_drawer(self):
         self.insert_tencent_review()
         response = self.login()
-        self.assertIn("没有发现问题".encode("utf-8"), response.data)
-        self.assertIn("栏目可能放错".encode("utf-8"), response.data)
-        self.assertIn("需要人工判断".encode("utf-8"), response.data)
-        self.assertIn("可能违规".encode("utf-8"), response.data)
-        self.assertIn("信息不完整".encode("utf-8"), response.data)
-        self.assertIn("系统看到了什么".encode("utf-8"), response.data)
+        self.assertIn("先处理这些".encode("utf-8"), response.data)
+        self.assertIn("调整栏目".encode("utf-8"), response.data)
+        self.assertIn("查看原帖".encode("utf-8"), response.data)
+        self.assertIn("确认保留".encode("utf-8"), response.data)
+        self.assertIn("为什么到这里".encode("utf-8"), response.data)
+        self.assertNotIn(b"built-in method clear", response.data)
         self.assertIn("发现了什么".encode("utf-8"), response.data)
         self.assertIn("查看证据和风险说明".encode("utf-8"), response.data)
 
@@ -413,6 +418,23 @@ class WebTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(status, "approved")
 
+    def test_dashboard_action_returns_to_dashboard_without_page_jump(self):
+        row_id = self.insert_tencent_review()
+        response = self.login()
+
+        response = self.client.post(
+            f"/reviews/tencent/{row_id}/resolve",
+            data={
+                "csrf_token": self.csrf(response),
+                "resolution": "approved",
+                "notes": "人工确认",
+                "next": "/?task=action",
+            },
+        )
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["Location"], "/?task=action")
+
     def test_post_requires_csrf(self):
         self.login()
         response = self.client.post("/logout", data={})
@@ -454,6 +476,42 @@ class WebTests(unittest.TestCase):
         self.assertEqual(self.fake_cli.edited[0][5:7], ("修改后的标题", "修改后的正文"))
         item = AdminStore(self.database_path).get_content("1", "feed-ok")
         self.assertEqual((item["title"], item["body"]), ("修改后的标题", "修改后的正文"))
+
+    def test_cached_content_delete_reconciles_post_already_missing_on_tencent(self):
+        self.insert_cached_content()
+        self.fake_cli.delete_error = TencentCliError(
+            "业务错误 (retCode=20074): 请求失败，请稍后重试"
+        )
+        self.fake_cli.detail_error = TencentCliError(
+            "业务错误 (retCode=10014): 呀，来晚了，数据已被删除"
+        )
+        response = self.login()
+
+        response = self.client.post(
+            "/contents/1/feed-ok/delete",
+            data={"csrf_token": self.csrf(response)},
+            follow_redirects=True,
+        )
+
+        self.assertIn("后台记录已同步为已删除".encode("utf-8"), response.data)
+        with sqlite3.connect(str(self.database_path)) as connection:
+            deleted_at = connection.execute(
+                "SELECT deleted_at FROM tencent_feed_cache WHERE guild_id = '1' AND feed_id = 'feed-ok'"
+            ).fetchone()[0]
+        self.assertTrue(deleted_at)
+
+    def test_failed_repeat_delete_does_not_restore_deleted_cache(self):
+        self.insert_cached_content()
+        store = AdminStore(self.database_path)
+        store.record_content_delete("1", "feed-ok", "admin")
+
+        store.record_content_delete("1", "feed-ok", "admin", "repeat request failed")
+
+        with sqlite3.connect(str(self.database_path)) as connection:
+            deleted_at = connection.execute(
+                "SELECT deleted_at FROM tencent_feed_cache WHERE guild_id = '1' AND feed_id = 'feed-ok'"
+            ).fetchone()[0]
+        self.assertTrue(deleted_at)
 
     def test_official_read_capability_executes_and_is_audited(self):
         response = self.login()

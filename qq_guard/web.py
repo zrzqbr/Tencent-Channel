@@ -261,13 +261,35 @@ def create_app(
         for item in reviews:
             queue_counts[item["ui_queue"]] += 1
 
-        selected_queue = request.args.get("queue", "")
-        if selected_queue not in queue_counts:
-            selected_queue = next(
-                (key for key in ("review", "delete", "placement", "incomplete", "allow") if queue_counts[key]),
-                "allow",
+        task_counts = {
+            "action": queue_counts["delete"] + queue_counts["review"],
+            "placement": queue_counts["placement"],
+            "inspect": queue_counts["incomplete"],
+            "clear": queue_counts["allow"],
+        }
+        for item in reviews:
+            item["dashboard_task"] = {
+                "delete": "action",
+                "review": "action",
+                "placement": "placement",
+                "incomplete": "inspect",
+                "allow": "clear",
+            }[item["ui_queue"]]
+
+        selected_task = request.args.get("task", request.args.get("queue", ""))
+        legacy_tasks = {
+            "delete": "action",
+            "review": "action",
+            "incomplete": "inspect",
+            "allow": "clear",
+        }
+        selected_task = legacy_tasks.get(selected_task, selected_task)
+        if selected_task not in task_counts:
+            selected_task = next(
+                (key for key in ("action", "placement", "inspect", "clear") if task_counts[key]),
+                "clear",
             )
-        visible_reviews = [item for item in reviews if item["ui_queue"] == selected_queue]
+        visible_reviews = [item for item in reviews if item["dashboard_task"] == selected_task]
         selected_key = request.args.get("selected", "")
         selected_item = next(
             (
@@ -283,8 +305,9 @@ def create_app(
             reviews=visible_reviews,
             all_pending_reviews=reviews,
             selected_item=selected_item,
-            selected_queue=selected_queue,
+            selected_task=selected_task,
             queue_counts=queue_counts,
+            task_counts=task_counts,
             pending_high_count=queue_counts["delete"],
             scans=scans,
             config=current,
@@ -378,19 +401,16 @@ def create_app(
             item = store.get_content(guild_id, feed_id)
             if item.get("deleted_at"):
                 raise ValueError("这条内容已经删除")
-            cli_factory().delete_feed(
-                item["guild_id"],
-                item["channel_id"],
-                item["feed_id"],
-                item["create_time_raw"],
-                True,
-            )
+            delete_result = _delete_tencent_item(cli_factory(), item)
         except (TencentCliError, ValueError, OSError, AttributeError) as exc:
             store.record_content_delete(guild_id, feed_id, "admin", str(exc)[:500], remote_ip())
             flash(_public_operation_error(exc), "error")
         else:
             store.record_content_delete(guild_id, feed_id, "admin", remote_ip=remote_ip())
-            flash("帖子已从腾讯频道删除。", "success")
+            if delete_result == "already_missing":
+                flash("帖子在腾讯频道中已不存在，后台记录已同步为已删除。", "success")
+            else:
+                flash("帖子已从腾讯频道删除。", "success")
         return redirect(url_for("contents", guild=guild_id))
 
     @app.post("/contents/<guild_id>/<feed_id>/move")
@@ -526,13 +546,14 @@ def create_app(
     def resolve_review(source: str, row_id: int):
         resolution = request.form.get("resolution", "")
         notes = request.form.get("notes", "").strip()[:1000]
+        return_to = safe_next(request.form.get("next", ""))
         try:
             store.resolve_review(source, row_id, resolution, "admin", notes, remote_ip())
         except ValueError as exc:
             flash(str(exc), "error")
         else:
             flash("处理结果已保存，并进入操作记录。", "success")
-        return redirect(url_for("review_detail", source=source, row_id=row_id))
+        return redirect(return_to or url_for("review_detail", source=source, row_id=row_id))
 
     @app.post("/reviews/tencent/<int:row_id>/prepare-delete")
     @login_required
@@ -548,22 +569,26 @@ def create_app(
     @login_required
     def execute_delete(row_id: int):
         reason = "管理员在内容审核页直接删除"
+        return_to = safe_next(request.form.get("next", ""))
         if not manual_delete_enabled():
             flash("服务器尚未启用人工删除能力。", "error")
-            return redirect(url_for("review_detail", source="tencent", row_id=row_id))
+            return redirect(return_to or url_for("review_detail", source="tencent", row_id=row_id))
         try:
             store.ensure_current_tencent_review(row_id)
             item = store.get_review("tencent", row_id)
             client = cli_factory()
-            _delete_tencent_item(client, item)
+            delete_result = _delete_tencent_item(client, item)
         except Exception as exc:
             message = f"{type(exc).__name__}: {exc}"[:500]
             store.record_delete_result(row_id, "admin", "failed", message, reason, remote_ip())
             flash(_public_operation_error(exc), "error")
         else:
             store.record_delete_result(row_id, "admin", "deleted", "", reason, remote_ip())
-            flash("内容已从腾讯频道删除。", "success")
-        return redirect(url_for("review_detail", source="tencent", row_id=row_id))
+            if delete_result == "already_missing":
+                flash("内容在腾讯频道中已不存在，后台记录已同步为已删除。", "success")
+            else:
+                flash("内容已从腾讯频道删除。", "success")
+        return redirect(return_to or url_for("review_detail", source="tencent", row_id=row_id))
 
     @app.post("/reviews/bulk-delete/prepare")
     @login_required
@@ -646,9 +671,10 @@ def create_app(
         current = GuardConfig.from_file(str(resolved_config))
         target = _find_move_target(current, request.form.get("move_target", ""))
         reason = "管理员在内容审核页直接调整栏目"
+        return_to = safe_next(request.form.get("next", ""))
         if not row_ids or target is None:
             flash("请选择内容和目标栏目。", "error")
-            return redirect(url_for("reviews"))
+            return redirect(return_to or url_for("reviews"))
         try:
             items = [store.get_review("tencent", row_id) for row_id in row_ids]
             if len(row_ids) > 20:
@@ -657,7 +683,7 @@ def create_app(
                 raise ValueError("所选内容必须属于目标栏目的同一个频道")
         except ValueError as exc:
             flash(str(exc), "error")
-            return redirect(url_for("reviews", status=""))
+            return redirect(return_to or url_for("reviews", status=""))
 
         client = cli_factory()
         moved = 0
@@ -695,7 +721,7 @@ def create_app(
             flash(f"栏目调整完成：成功 {moved} 条、失败 {failed} 条。", "error")
         else:
             flash(f"已将 {moved} 条内容移动到“{target['label']}”。", "success")
-        return redirect(url_for("reviews", status=""))
+        return redirect(return_to or url_for("reviews", status=""))
 
     @app.get("/duplicates")
     @login_required
@@ -1568,6 +1594,8 @@ def _official_action_label(action: str) -> str:
 
 def _public_operation_error(value: Any) -> str:
     message = str(value or "").strip().casefold()
+    if _is_missing_content_error(value):
+        return "这条内容在腾讯频道中已不存在"
     if any(token in message for token in ("retcode=153", "频率上限", "rate limit")):
         return "腾讯平台当前请求较多，本次操作未完成，请稍后再试"
     if any(token in message for token in ("invalid ai token", "retcode=8011", "100051")):
@@ -2048,22 +2076,46 @@ def _find_move_target(config: GuardConfig, key: str):
     return next((target for target in _configured_move_targets(config) if target["key"] == key), None)
 
 
-def _delete_tencent_item(client: TencentCliClient, item: Dict[str, Any]) -> None:
-    create_time = str(item.get("source_created_at") or "").strip()
+def _delete_tencent_item(client: TencentCliClient, item: Dict[str, Any]) -> str:
+    feed_id = str(item.get("item_id") or item.get("feed_id") or "").strip()
+    create_time = str(
+        item.get("create_time_raw") or item.get("source_created_at") or ""
+    ).strip()
     if not create_time.isdigit():
-        detail = client.get_feed_detail(
-            item["guild_id"], item["channel_id"], item["item_id"]
-        )
+        try:
+            detail = client.get_feed_detail(
+                item["guild_id"], item["channel_id"], feed_id
+            )
+        except TencentCliError as exc:
+            if _is_missing_content_error(exc):
+                return "already_missing"
+            raise
         create_time = str(detail.get("create_time_raw") or detail.get("create_time") or "")
     if not create_time.isdigit():
         raise ValueError("无法确认原帖发布时间，为防止误删已停止操作")
-    client.delete_feed(
-        item["guild_id"],
-        item["channel_id"],
-        item["item_id"],
-        create_time,
-        live=True,
-    )
+    try:
+        client.delete_feed(
+            item["guild_id"],
+            item["channel_id"],
+            feed_id,
+            create_time,
+            live=True,
+        )
+    except TencentCliError as delete_error:
+        if _is_missing_content_error(delete_error):
+            return "already_missing"
+        try:
+            client.get_feed_detail(item["guild_id"], item["channel_id"], feed_id)
+        except TencentCliError as detail_error:
+            if _is_missing_content_error(detail_error):
+                return "already_missing"
+        raise delete_error
+    return "deleted"
+
+
+def _is_missing_content_error(value: Any) -> bool:
+    message = str(value or "").casefold()
+    return "retcode=10014" in message or "数据已被删除" in message
 
 
 def _is_rate_limit_error(exc: Exception) -> bool:

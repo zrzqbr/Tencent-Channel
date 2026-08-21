@@ -1,7 +1,9 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from qq_guard.config import GuardConfig
 from qq_guard.tencent_monitor import TencentChannelMonitor
@@ -355,6 +357,16 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertEqual((first.new_feeds, first.cached_feeds), (1, 0))
         self.assertEqual((second.new_feeds, second.cached_feeds), (0, 1))
         self.assertEqual((third.updated_feeds, third.cached_feeds), (1, 0))
+
+    def test_background_scan_loop_is_disabled_by_default(self):
+        monitor = TencentChannelMonitor(self.config(), FakeTencentApi({}, {}))
+
+        with patch.dict(os.environ, {"QQ_GUARD_AUTO_SCAN_ENABLED": "false"}), patch(
+            "qq_guard.tencent_monitor.time.sleep"
+        ) as sleep:
+            monitor.run_forever()
+
+        sleep.assert_not_called()
 
 
 if __name__ == "__main__":

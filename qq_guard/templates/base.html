@@ -5,15 +5,15 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="noindex, nofollow">
   <title>{% block title %}腾讯频道治理{% endblock %}</title>
-  <link rel="stylesheet" href="{{ url_for('static', filename='remixicon.css', v='0.7.0') }}">
-  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css', v='0.7.0') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='remixicon.css', v='0.7.1') }}">
+  <link rel="stylesheet" href="{{ url_for('static', filename='admin.css', v='0.7.1') }}">
 </head>
 <body>
   <div class="app-shell">
     <aside class="sidebar" id="sidebar">
       <a class="brand" href="{{ url_for('dashboard') }}"><span class="brand-mark"><i class="ri-shield-check-line" aria-hidden="true"></i></span><span><strong>腾讯频道治理</strong></span></a>
       <nav aria-label="主要导航">
-        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><i class="ri-calendar-check-line" aria-hidden="true"></i><span>待办工作台</span>{% if request.endpoint == 'dashboard' and summary is defined %}<b>{{ summary.pending }}</b>{% endif %}</a>
+        <a class="nav-link {{ 'active' if request.endpoint == 'dashboard' }}" href="{{ url_for('dashboard') }}"><i class="ri-calendar-check-line" aria-hidden="true"></i><span>今日处理</span>{% if request.endpoint == 'dashboard' and summary is defined %}<b>{{ summary.pending }}</b>{% endif %}</a>
         <a class="nav-link {{ 'active' if request.endpoint in ['contents','edit_content','delete_content','move_content'] }}" href="{{ url_for('contents') }}"><i class="ri-file-list-3-line" aria-hidden="true"></i><span>全部内容</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['reviews','review_detail','ai_analysis','placements','confirm_delete','confirm_bulk_delete','confirm_bulk_move'] }}" href="{{ url_for('reviews') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span>内容审核</span></a>
         <a class="nav-link {{ 'active' if request.endpoint in ['official_capabilities','official_capability'] }}" href="{{ url_for('official_capabilities') }}"><i class="ri-edit-box-line" aria-hidden="true"></i><span>频道管理</span></a>
@@ -37,6 +37,6 @@
       </section>
     </main>
   </div>
-  <script src="{{ url_for('static', filename='admin.js', v='0.7.0') }}" defer></script>
+  <script src="{{ url_for('static', filename='admin.js', v='0.7.1') }}" defer></script>
 </body>
 </html>
