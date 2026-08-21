@@ -285,10 +285,12 @@ class WebTests(unittest.TestCase):
         response = self.client.get("/official")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn("你想做什么".encode("utf-8"), response.data)
+        self.assertIn("选择要完成的工作".encode("utf-8"), response.data)
         self.assertIn("查清楚".encode("utf-8"), response.data)
         self.assertIn("处理风险".encode("utf-8"), response.data)
-        self.assertIn("暂未开启真实修改".encode("utf-8"), response.data)
+        self.assertIn("当前只允许查看和检查填写内容".encode("utf-8"), response.data)
+        self.assertIn(b'<details class="capability-catalog">', response.data)
+        self.assertNotIn(b'<details class="capability-catalog" open>', response.data)
 
     def test_official_action_uses_synced_dropdown_candidates(self):
         self.insert_tencent_review(feed_id="feed-sync", title="同步候选帖子")
@@ -310,8 +312,10 @@ class WebTests(unittest.TestCase):
         self.assertIn('name="param__channel-id"'.encode("utf-8"), response.data)
         self.assertIn('name="param__feed-id"'.encode("utf-8"), response.data)
         self.assertIn("同步候选帖子".encode("utf-8"), response.data)
-        self.assertIn("WorkBuddy · 1".encode("utf-8"), response.data)
-        self.assertIn("WorkBuddy · 实用文章 · 3".encode("utf-8"), response.data)
+        self.assertIn(">WorkBuddy</option>".encode("utf-8"), response.data)
+        self.assertIn("WorkBuddy · 实用文章".encode("utf-8"), response.data)
+        self.assertNotIn("WorkBuddy · 1".encode("utf-8"), response.data)
+        self.assertNotIn("实用文章 · 3".encode("utf-8"), response.data)
         self.assertIn(">频道<b".encode("utf-8"), response.data)
         self.assertIn(">栏目<b".encode("utf-8"), response.data)
         self.assertIn(">帖子<b".encode("utf-8"), response.data)
@@ -320,7 +324,7 @@ class WebTests(unittest.TestCase):
     def test_utc_scan_time_is_displayed_as_beijing_time(self):
         self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")
 
-    def test_review_detail_explains_sensitive_term_and_score(self):
+    def test_review_detail_explains_sensitive_term_without_internal_score(self):
         row_id = self.insert_tencent_review()
         self.login()
 
@@ -329,7 +333,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("确认删除这条内容".encode("utf-8"), response.data)
         self.assertIn("敏感词/违禁词".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
-        self.assertIn("风险影响 +80".encode("utf-8"), response.data)
+        self.assertNotIn("风险影响 +80".encode("utf-8"), response.data)
 
     def test_review_detail_hides_internal_ai_connection_error(self):
         row_id = self.insert_tencent_review(title="等待智能判断")
@@ -376,7 +380,7 @@ class WebTests(unittest.TestCase):
             },
             follow_redirects=True,
         )
-        self.assertIn("审核结论已保存".encode("utf-8"), response.data)
+        self.assertIn("处理结果已保存".encode("utf-8"), response.data)
 
     def test_post_requires_csrf(self):
         self.login()
@@ -420,7 +424,7 @@ class WebTests(unittest.TestCase):
                 "confirmation_phrase": "确认执行",
             },
         )
-        self.assertIn("尚未开启官方写操作".encode("utf-8"), response.data)
+        self.assertIn("本次操作没有完成".encode("utf-8"), response.data)
         self.assertEqual(self.fake_cli.capability_calls, [])
 
     def test_content_test_explains_classification(self):
@@ -437,7 +441,8 @@ class WebTests(unittest.TestCase):
         )
         self.assertEqual(response.status_code, 200)
         self.assertIn("每周一问".encode("utf-8"), response.data)
-        self.assertIn("检测结果".encode("utf-8"), response.data)
+        self.assertIn("判断结果".encode("utf-8"), response.data)
+        self.assertNotIn("风险影响 +".encode("utf-8"), response.data)
 
     def test_add_sensitive_term_updates_version(self):
         response = self.login()
@@ -521,10 +526,103 @@ class WebTests(unittest.TestCase):
         self.login()
         response = self.client.get("/ai-analysis")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("判断依据".encode("utf-8"), response.data)
-        self.assertIn("只有规则结果".encode("utf-8"), response.data)
-        self.assertIn("本条只有规则检查结果".encode("utf-8"), response.data)
+        self.assertIn("判断记录".encode("utf-8"), response.data)
+        self.assertIn("需要人工补充判断".encode("utf-8"), response.data)
+        self.assertIn("当前只有基础内容检查结果".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
+
+    def test_ai_analysis_paginates_and_normalizes_unsupported_delete_suggestion(self):
+        for index in range(9):
+            self.insert_tencent_review(f"feed-{index}", f"记录 {index}")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET reasons_json = ? WHERE feed_id = 'feed-0'",
+                (json.dumps([{
+                    "code": "low_information_content",
+                    "category": "quality",
+                    "severity": "medium",
+                    "message": "正文有效信息量较少",
+                    "score": 80,
+                    "auto_delete_eligible": False,
+                }], ensure_ascii=False),),
+            )
+        self.login()
+        response = self.client.get("/ai-analysis")
+        self.assertEqual(response.data.count(b'class="panel analysis-record"'), 8)
+        self.assertIn("第 1 / 2 页".encode("utf-8"), response.data)
+        response = self.client.get("/ai-analysis?page=2")
+        self.assertEqual(response.data.count(b'class="panel analysis-record"'), 1)
+        self.assertIn("需要人工判断".encode("utf-8"), response.data)
+        self.assertNotIn("发现高风险信号".encode("utf-8"), response.data)
+
+    def test_audit_page_hides_internal_fields_and_paginates(self):
+        store = AdminStore(self.database_path)
+        store.record_audit(
+            "admin",
+            "official.failed",
+            "feed",
+            "move-feed",
+            {"error": "retCode=153 request_id=req-secret", "payload": {"feed_id": "hidden"}},
+        )
+        for index in range(24):
+            store.record_audit("admin", "policy.update", "moderation", str(index), {"version": index})
+        self.login()
+        response = self.client.get("/audit")
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.data.count(b'class="audit-item'), 20)
+        self.assertIn("第 1 / 2 页".encode("utf-8"), response.data)
+        self.assertNotIn(b"official.failed", response.data)
+        self.assertNotIn(b"retCode", response.data)
+        self.assertNotIn(b"request_id", response.data)
+        response = self.client.get("/audit?page=2")
+        self.assertIn("频道操作失败".encode("utf-8"), response.data)
+        self.assertIn("腾讯平台当前请求较多".encode("utf-8"), response.data)
+
+    def test_duplicate_records_hide_feed_and_channel_ids(self):
+        AdminStore(self.database_path)
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                INSERT INTO tencent_duplicate_actions
+                (newer_feed_id, older_feed_id, guild_id, guild_name, channel_id,
+                 section, delete_status, error, created_at)
+                VALUES ('new-feed-secret', 'old-feed-secret', 'guild-secret',
+                        '测试频道', 'channel-secret', 'qa_discussion',
+                        'detected_only', '', '2026-08-21T01:00:00+00:00')
+                """
+            )
+        self.login()
+        response = self.client.get("/duplicates")
+        self.assertIn("重复内容记录".encode("utf-8"), response.data)
+        self.assertIn("后发布的内容与前一条完全相同".encode("utf-8"), response.data)
+        self.assertIn("已发现，等待人工处理".encode("utf-8"), response.data)
+        self.assertNotIn(b"new-feed-secret", response.data)
+        self.assertNotIn(b"old-feed-secret", response.data)
+        self.assertNotIn(b"channel-secret", response.data)
+        self.assertNotIn(b"detected_only", response.data)
+
+    def test_channel_and_content_check_forms_use_named_board_choices(self):
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy",
+            "guild_id": "123456789",
+            "channels": {"qa_discussion": "987654321"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "987654321": {
+                "name": "WorkBuddy · 问答与交流",
+                "expected_sections": ["qa_discussion"],
+            }
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        self.login()
+        for path in ("/channels", "/test"):
+            with self.subTest(path=path):
+                response = self.client.get(path)
+                self.assertIn("WorkBuddy · 问答与交流".encode("utf-8"), response.data)
+                self.assertNotIn("栏目 ID".encode("utf-8"), response.data)
+                self.assertNotIn("栏目编号".encode("utf-8"), response.data)
 
     def test_delete_requires_second_confirmation_and_reauthentication(self):
         row_id = self.insert_tencent_review()

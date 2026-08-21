@@ -1,20 +1,20 @@
 {% extends "base.html" %}
-{% block title %}内容测试 · 腾讯频道内容治理后台{% endblock %}
-{% block heading %}内容测试{% endblock %}
+{% block title %}检查一条内容 · 腾讯频道治理{% endblock %}
+{% block heading %}检查一条内容{% endblock %}
 {% block content %}
 <div class="two-column align-start">
-  <section class="panel"><div class="panel-title"><div><h2>模拟检测一条内容</h2><p>只计算分类和审核结果，不连接 QQ，也不会删除</p></div></div>
+  <section class="panel"><div class="panel-title"><div><h2>填写要检查的内容</h2><p>用于提前查看系统会怎样判断，不会发布、修改或删除频道内容。</p></div></div>
     <form method="post" class="stack-form">
       <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-      <label>目标版块 ID<input name="channel_id" placeholder="可填写现有版块 ID"></label>
+      <label>准备发布到哪个栏目<select name="channel_id"><option value="">暂不指定栏目</option>{% for option in board_options %}<option value="{{ option.value }}">{{ option.label }}</option>{% endfor %}</select></label>
       <label>标题<input name="title" maxlength="500"></label>
       <label>正文<textarea name="body" rows="10" required placeholder="例如：#每周一问 你最常用的云原生工具是什么？"></textarea></label>
-      <label>图片或视频地址<textarea name="media_urls" rows="3" placeholder="每行一个，可留空"></textarea></label>
-      <button class="primary-button" type="submit">开始检测</button>
+      <label>图片或视频链接<textarea name="media_urls" rows="3" placeholder="每行一个，可留空"></textarea></label>
+      <button class="primary-button" type="submit">查看判断结果</button>
     </form>
   </section>
-  <section class="panel result-panel"><div class="panel-title"><div><h2>检测结果</h2><p>展示分类、置信度、风险分和具体理由</p></div></div>
-  {% if result %}<div class="result-score"><span>{{ section_labels.get(result.classification.section.value, result.classification.section.value) }}</span><strong>{{ (result.classification.confidence * 100)|round|int }}%</strong></div>{% if result.ai_review %}<div class="info-banner"><strong>AI 语义审核 · {{ result.ai_review.model }}</strong><p>{{ result.ai_review.summary }}</p></div>{% elif result.ai_error %}<div class="info-banner"><strong>AI 安全降级</strong><p>{{ result.ai_error }}</p></div>{% endif %}<p>风险：<span class="risk-pill risk-{{ result.moderation.risk_level.value }}">{{ risk_labels.get(result.moderation.risk_level.value) }} · {{ result.moderation.risk_score }}</span></p><p>建议动作：{{ action_labels.get(result.moderation.action.value) }}</p><div class="reason-list">{% for reason in result.moderation.reasons %}<article><div><strong>{{ reason.message }}</strong><span>{{ reason.code }}</span></div><b>+{{ reason.score }}</b>{% if reason.evidence %}<p>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">AI 与规则均未发现风险，可以放行。</p>{% endfor %}</div>{% else %}<p class="empty tall">填写左侧内容后查看结果</p>{% endif %}
+  <section class="panel result-panel"><div class="panel-title"><div><h2>判断结果</h2><p>先看结论和原因，再决定是否发布或调整内容。</p></div></div>
+  {% if result %}<div class="result-score"><span>更适合的栏目</span><strong>{{ section_labels.get(result.classification.section.value, result.classification.section.value) }}</strong></div>{% if result.ai_review %}<div class="info-banner"><strong>系统综合判断</strong><p>{{ result.ai_review.summary }}</p></div>{% elif result.ai_error %}<div class="info-banner warning-banner"><strong>当前需要人工补充判断</strong><p>{{ result.ai_error|public_ai_error }}</p></div>{% endif %}<p>风险程度：<span class="risk-pill risk-{{ result.moderation.risk_level.value }}">{{ risk_labels.get(result.moderation.risk_level.value) }}风险</span></p><p>系统建议：<strong>{{ action_labels.get(result.moderation.action.value) }}</strong></p><div class="reason-list">{% for reason in result.moderation.reasons %}<article><div><strong>{{ reason.message }}</strong><span>{{ risk_labels.get(reason.severity.value if reason.severity.value is defined else reason.severity, reason.severity) }}风险</span></div>{% if reason.evidence %}<p>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有发现明显问题，可以正常发布。</p>{% endfor %}</div>{% else %}<p class="empty tall">填写左侧内容后查看结果</p>{% endif %}
   </section>
 </div>
 {% endblock %}

@@ -84,7 +84,7 @@ class ModerationEngine:
                     code="external_link_detected",
                     category="information_screening",
                     severity="low",
-                    message="内容包含外部链接，需要按所在版块规则判断是否允许",
+                    message="内容包含外部链接，需要按所在栏目规则判断是否允许",
                     evidence=urls[0][:120],
                     score=5,
                 )
@@ -115,7 +115,7 @@ class ModerationEngine:
                         code="section_mismatch",
                         category="board_policy",
                         severity="medium",
-                        message=f"内容分类与“{board.name}”版块允许的栏目不一致",
+                        message=f"内容分类与“{board.name}”栏目的发布要求不一致",
                         evidence=f"当前：{classification.section.display_name}；允许：{expected}",
                         score=30,
                     )
@@ -126,7 +126,7 @@ class ModerationEngine:
                         code="required_hashtag_missing",
                         category="board_policy",
                         severity="medium",
-                        message=f"“{board.name}”版块要求至少包含一个井号话题",
+                        message=f"“{board.name}”栏目要求至少包含一个井号话题",
                         score=25,
                     )
                 )
@@ -136,7 +136,7 @@ class ModerationEngine:
                         code="external_link_not_allowed",
                         category="board_policy",
                         severity="medium",
-                        message=f"“{board.name}”版块不允许外部链接",
+                        message=f"“{board.name}”栏目不允许外部链接",
                         evidence=urls[0][:120],
                         score=30,
                     )
@@ -149,7 +149,7 @@ class ModerationEngine:
                     code="low_information_content",
                     category="quality",
                     severity="medium",
-                    message="正文有效信息量低于当前版块最低要求",
+                    message="正文有效信息量低于当前栏目最低要求",
                     evidence=f"有效字符 {meaningful_length}，最低要求 {min_length}",
                     score=25,
                 )
@@ -310,7 +310,7 @@ def duplicate_policy_reason(previous_platform_item_id: str) -> PolicyReason:
         category="duplicate",
         severity="high",
         message="同一作者在同一频道、同一栏目内连续发布完全相同内容",
-        evidence=f"上一条内容 ID：{previous_platform_item_id}",
+        evidence="已与上一条连续发布内容核对为完全相同",
         score=60,
         auto_delete_eligible=True,
     )

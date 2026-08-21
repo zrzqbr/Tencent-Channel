@@ -5,8 +5,8 @@
 <section class="panel confirm-card">
   <span class="warning-icon">!</span>
   <h2>这一步会真实删除频道内容</h2>
-  <p>删除对象：<strong>{{ item.title or item.item_id }}</strong></p>
-  <dl class="meta-grid"><div><dt>频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div><div><dt>内容 ID</dt><dd class="break-all">{{ item.item_id }}</dd></div><div><dt>风险</dt><dd>{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</dd></div></dl>
+  <p>删除对象：<strong>{{ item.title or item.body|truncate(60) or '无标题内容' }}</strong></p>
+  <dl class="meta-grid"><div><dt>频道</dt><dd>{{ item.guild_name or '未命名频道' }}</dd></div><div><dt>栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div><div><dt>作者</dt><dd>这条内容的发布者</dd></div><div><dt>风险</dt><dd>{{ risk_labels.get(item.risk_level, item.risk_level) }}风险</dd></div></dl>
   <form action="{{ url_for('execute_delete', row_id=item.id) }}" method="post" class="stack-form narrow-form" data-confirm-action-form>
     <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
     <label>删除理由<textarea name="reason" rows="4" minlength="4" required placeholder="必须说明为什么删除，这段文字将永久写入审计记录"></textarea></label>

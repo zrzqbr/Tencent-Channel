@@ -1,11 +1,12 @@
 {% extends "base.html" %}
-{% block title %}严格去重记录 · 腾讯频道治理{% endblock %}
-{% block heading %}严格去重记录{% endblock %}
-{% block page_intro %}<p class="page-subtitle">仅记录同作者、同栏目、连续且完全相同的内容</p>{% endblock %}
+{% block title %}重复内容记录 · 腾讯频道治理{% endblock %}
+{% block heading %}重复内容记录{% endblock %}
+{% block page_intro %}<p class="page-subtitle">查看系统发现的连续重复发布内容</p>{% endblock %}
 {% block topbar_extra %}<a class="secondary-button" href="{{ url_for('audit') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回操作记录</a>{% endblock %}
 {% block content %}
-<section class="info-banner"><strong>判定边界</strong><p>仅命中同一频道、同一栏目、同一作者、连续且标题正文媒体完全一致的后一条内容。</p></section>
-<section class="panel"><div class="table-wrap"><table><thead><tr><th>频道</th><th>栏目</th><th>较新内容</th><th>上一条内容</th><th>处理结果</th><th>时间</th></tr></thead><tbody>
-{% for item in items %}<tr><td>{{ item.guild_name or item.guild_id }}<small class="subline">{{ item.channel_id }}</small></td><td>{{ section_labels.get(item.section, item.section) }}</td><td class="mono break-all">{{ item.newer_feed_id }}</td><td class="mono break-all">{{ item.older_feed_id }}</td><td><span class="pill">{{ item.delete_status }}</span>{% if item.error %}<small class="subline error-text">{{ item.error }}</small>{% endif %}</td><td>{{ item.created_at|replace('T',' ')|truncate(19, True, '') }}</td></tr>{% else %}<tr><td colspan="6" class="empty">尚未检测到严格重复内容</td></tr>{% endfor %}
+<section class="info-banner"><strong>什么情况会记录</strong><p>同一频道、同一栏目、同一作者连续发布完全相同的标题、正文和媒体内容时，系统会记录后发布的那一条。</p></section>
+<section class="panel"><div class="table-wrap"><table><thead><tr><th>频道</th><th>栏目</th><th>重复情况</th><th>处理结果</th><th>发现时间</th></tr></thead><tbody>
+{% for item in items %}<tr><td>{{ item.guild_name }}</td><td>{{ section_labels.get(item.section, item.section) }}</td><td>后发布的内容与前一条完全相同</td><td><span class="pill">{{ item.result }}</span>{% if item.error %}<small class="subline error-text">{{ item.error }}</small>{% endif %}</td><td>{{ item.created_at|cn_time('%Y-%m-%d %H:%M') }}</td></tr>{% else %}<tr><td colspan="5" class="empty">当前没有发现连续重复发布的内容</td></tr>{% endfor %}
 </tbody></table></div></section>
+{% if total_pages > 1 %}<nav class="pagination" aria-label="重复内容记录翻页">{% if page > 1 %}<a class="secondary-button compact" href="{{ url_for('duplicates', page=page-1) }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ total_pages }} 页</span>{% if page < total_pages %}<a class="secondary-button compact" href="{{ url_for('duplicates', page=page+1) }}">下一页</a>{% endif %}</nav>{% endif %}
 {% endblock %}

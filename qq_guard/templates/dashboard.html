@@ -17,7 +17,7 @@
   <div class="scan-stage {{ 'completed' if ai_status.status == 'ready' else 'attention' }}"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>{{ '已完成智能判断' if ai_status.status == 'ready' else '等待智能判断' }}</strong></span></div><i class="ri-arrow-right-s-line stage-arrow" aria-hidden="true"></i>
   <div class="scan-stage current"><i class="ri-user-follow-line" aria-hidden="true"></i><span><strong>等你确认 {{ summary.pending }} 条</strong></span></div>
 </section>
-<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮判断依据</a></div>
+<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><a href="{{ url_for('ai_analysis') }}" data-scan-results hidden>查看本轮判断记录</a></div>
 
 {% set latest = summary.latest_scan or {} %}
 <section class="scan-metric-grid" aria-label="本轮读取情况">
@@ -49,7 +49,7 @@
       {% for item in reviews %}{% set item_key = item.source ~ '-' ~ item.id %}
       <article class="queue-row {{ 'selected' if selected_item and selected_item.source == item.source and selected_item.id == item.id }} {{ 'conflict' if item.has_conflict }}" data-review-row="{{ item_key }}">
         <div class="queue-content"><span class="risk-dot risk-{{ item.risk_level }}"></span><span><strong>{{ item.title or item.body|truncate(34) or '无标题内容' }}</strong><small>{{ item.body|striptags|truncate(46) or '暂无正文摘要' }}</small></span></div>
-        <div><strong>{{ item.author_id|truncate(18, True, '') or '未知作者' }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }}</small></div>
+        <div><strong>{{ item.author_display }}</strong><small>{{ item.guild_name or '未命名频道' }} · {{ section_labels.get(item.section, item.section) }}</small></div>
         <div><strong class="queue-summary">{{ item.guidance.status }}</strong><small>{{ item.guidance.why|truncate(54) }}</small></div>
         <div><span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span></div>
         <div><a class="row-review-button" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}" data-review-link="{{ item_key }}" data-dashboard-url="{{ url_for('dashboard', queue=selected_queue, selected=item_key) }}">查看并处理</a></div>

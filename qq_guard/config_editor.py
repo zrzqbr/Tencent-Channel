@@ -165,10 +165,10 @@ class ConfigEditor:
     def upsert_board(self, values: Dict[str, Any]) -> str:
         channel_id = str(values.get("channel_id", "")).strip()
         if not channel_id.isdigit():
-            raise ValueError("版块 ID 必须为数字")
+            raise ValueError("请选择有效的栏目")
         name = str(values.get("name", "")).strip()
         if not name or len(name) > 80:
-            raise ValueError("版块名称长度必须为 1–80 个字符")
+            raise ValueError("栏目名称长度必须为 1–80 个字符")
         expected = [str(value) for value in values.get("expected_sections", [])]
         allowed = {section.value for section in Section}
         if not expected or any(value not in allowed for value in expected):
@@ -197,7 +197,7 @@ class ConfigEditor:
         def mutate(raw: Dict[str, Any]) -> None:
             policies = raw.setdefault("board_policies", {})
             if channel_id not in policies:
-                raise ValueError("版块规则不存在")
+                raise ValueError("栏目规则不存在")
             policies.pop(channel_id)
             raw.setdefault("channel_sections", {}).pop(channel_id, None)
 

@@ -1,16 +1,10 @@
 {% extends "base.html" %}
-{% block title %}判断依据 · 腾讯频道治理{% endblock %}
-{% block heading %}判断依据{% endblock %}
-{% block page_intro %}<p class="page-subtitle">需要深入核对时，在这里查看文字、图片和规则依据</p>{% endblock %}
+{% block title %}判断记录 · 腾讯频道治理{% endblock %}
+{% block heading %}判断记录{% endblock %}
+{% block page_intro %}<p class="page-subtitle">查看系统为什么这样判断，以及管理员下一步怎么做</p>{% endblock %}
 {% block topbar_extra %}<a class="secondary-button" href="{{ url_for('reviews') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回内容处理</a>{% endblock %}
 {% block content %}
-{% if ai_status.status == 'ready' %}
-<section class="info-banner ai-ready-banner"><strong>文字和图片判断能力已连接</strong><p>这里逐条展示系统看到了什么，以及形成判断的具体依据。</p></section>
-{% elif ai_status.status == 'missing_key' %}
-<section class="info-banner warning-banner"><strong>智能判断暂时不可用</strong><p>当前记录只有固定规则检查结果。恢复连接并重新巡检后，新内容才会补充文字和图片判断。</p></section>
-{% else %}
-<section class="info-banner warning-banner"><strong>智能判断当前未启用</strong><p>现有记录只展示固定规则检查结果。</p></section>
-{% endif %}
+{% if ai_status.status != 'ready' %}<section class="info-banner warning-banner"><strong>部分内容需要人工核对</strong><p>智能判断当前没有完整运行。已有的基础检查仍会保留，但不会自动处理任何内容。</p></section>{% endif %}
 
 <div class="metric-grid ai-metric-grid">
   <article class="metric"><span>当前记录</span><strong>{{ metrics.total }}</strong><small>符合当前筛选</small></article>
@@ -21,7 +15,7 @@
 
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
-    <label>判断方式<select name="source"><option value="">全部</option><option value="ai" {{ 'selected' if selected_source == 'ai' }}>智能判断完整</option><option value="rules" {{ 'selected' if selected_source == 'rules' }}>只有规则结果</option></select></label>
+    <label>判断完成度<select name="source"><option value="">全部</option><option value="ai" {{ 'selected' if selected_source == 'ai' }}>判断信息完整</option><option value="rules" {{ 'selected' if selected_source == 'rules' }}>需要人工补充判断</option></select></label>
     <label>风险等级<select name="risk"><option value="">全部</option>{% for key in ['critical','high','medium','low'] %}<option value="{{ key }}" {{ 'selected' if selected_risk == key }}>{{ risk_labels[key] }}</option>{% endfor %}</select></label>
     <button class="primary-button compact" type="submit">筛选记录</button>
   </form>
@@ -31,18 +25,14 @@
   {% for item in items %}
   <article class="panel analysis-record">
     <div class="analysis-record-head">
-      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ '智能判断完整' if item.analysis_source == 'ai' else '只有规则结果' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</p></div>
-      <span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险 · {{ item.risk_score }}</span>
+      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ '判断信息完整' if item.analysis_source == 'ai' else '需要人工补充判断' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or '未命名频道' }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|cn_time('%Y-%m-%d %H:%M') }}</p></div>
+      <span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span>
     </div>
-    <div class="analysis-record-grid">
-      <div><span>固定规则检查</span><strong>已完成</strong><p>{{ item.reasons[0].message if item.reasons else '未发现明确规则风险' }}</p></div>
-      <div><span>图片检查</span><strong>{% if not item.media_urls %}无需检查（无图片）{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</strong><p>{% if item.ai_analysis.get('vision_analysis') %}{{ item.ai_analysis.get('vision_analysis') }}{% elif item.ai_analysis.get('vision_error') %}{{ item.ai_analysis.get('vision_error')|public_ai_error }}{% else %}暂无图片依据{% endif %}</p></div>
-      <div><span>文字综合判断</span><strong>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}{% if item.ai_confidence is not none %} · {{ (item.ai_confidence * 100)|round|int }}%{% endif %}</strong><p>{% if item.ai_analysis.get('summary') %}{{ item.ai_analysis.get('summary') }}{% elif item.ai_error %}{{ item.ai_error|public_ai_error }}{% else %}本条只有规则检查结果。{% endif %}</p></div>
-      <div><span>当前结果</span><strong>{{ action_labels.get(item.action, item.action) }}</strong><p>{{ status_labels.get(item.review_status, item.review_status) }}</p></div>
-    </div>
-    {% if item.reasons %}<div class="record-reasons">{% for reason in item.reasons[:3] %}<span>{{ reason.message }}{% if reason.evidence %}：{{ reason.evidence }}{% endif %}</span>{% endfor %}</div>{% endif %}
-    <a class="record-detail-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">打开内容并处理</a>
+    <section class="analysis-guidance"><div><span>系统判断</span><strong>{{ item.guidance.status }}</strong></div><div><span>主要原因</span><p>{{ item.guidance.why }}</p></div><div><span>下一步</span><strong>{{ item.guidance.action }}</strong></div></section>
+    <details class="analysis-evidence"><summary>查看文字、图片和具体依据</summary><div class="analysis-record-grid"><div><span>基础内容检查</span><strong>已完成</strong><p>{{ item.reasons[0].message if item.reasons else '没有发现明确的基础规则问题' }}</p></div><div><span>图片检查</span><strong>{% if not item.media_urls %}无需检查{% else %}{{ vision_status_labels.get(item.ai_analysis.get('vision_status', 'not_requested'), item.ai_analysis.get('vision_status', 'not_requested')) }}{% endif %}</strong><p>{% if item.ai_analysis.get('vision_analysis') %}{{ item.ai_analysis.get('vision_analysis') }}{% elif item.ai_analysis.get('vision_error') %}{{ item.ai_analysis.get('vision_error')|public_ai_error }}{% else %}暂无图片依据{% endif %}</p></div><div><span>文字综合判断</span><strong>{{ ai_status_labels.get(item.ai_status, item.ai_status) }}</strong><p>{% if item.ai_analysis.get('summary') %}{{ item.ai_analysis.get('summary') }}{% elif item.ai_error %}{{ item.ai_error|public_ai_error }}{% else %}当前只有基础内容检查结果。{% endif %}</p></div></div>{% if item.reasons %}<div class="record-reasons">{% for reason in item.reasons[:3] %}<span>{{ reason.message }}{% if reason.evidence %}：{{ reason.evidence }}{% endif %}</span>{% endfor %}</div>{% endif %}</details>
+    <a class="record-detail-link" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}">查看完整内容并处理</a>
   </article>
   {% else %}<section class="panel empty tall">当前筛选条件下没有分析记录</section>{% endfor %}
 </section>
+{% if total_pages > 1 %}<nav class="pagination" aria-label="判断记录翻页">{% if page > 1 %}<a class="secondary-button compact" href="{{ url_for('ai_analysis', source=selected_source, risk=selected_risk, page=page-1) }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ total_pages }} 页</span>{% if page < total_pages %}<a class="secondary-button compact" href="{{ url_for('ai_analysis', source=selected_source, risk=selected_risk, page=page+1) }}">下一页</a>{% endif %}</nav>{% endif %}
 {% endblock %}

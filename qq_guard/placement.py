@@ -57,7 +57,9 @@ def placement_review(
             detected = Section.UNCLASSIFIED
 
         item["current_label"] = _current_label(config, channel_id, current["label"])
-        item["placement_reason"] = _reason(item, detected, issues)
+        item["placement_reason"] = _reason(
+            item, detected, issues, item["current_label"]
+        )
         item["detected_label"] = detected.display_name
 
         # Without #topic, the system must never recommend moving a post into 每周一问.
@@ -110,13 +112,32 @@ def _current_label(config: GuardConfig, channel_id: str, fallback: str) -> str:
     return board.name if board and board.name else fallback
 
 
-def _reason(item: Mapping[str, Any], detected: Section, issues: set) -> str:
+def _reason(
+    item: Mapping[str, Any], detected: Section, issues: set, current_label: str
+) -> str:
     classification = item.get("classification") or {}
     reasons = [str(value) for value in classification.get("reasons") or [] if value]
-    prefix = "缺少井号话题；" if "missing_weekly_hashtag" in issues else ""
+    if "missing_weekly_hashtag" in issues:
+        return "这条内容没有带规定的话题标签，不能直接归入“每周一问”。"
     if reasons:
-        return f"{prefix}{reasons[0]}"
+        reason = reasons[0].strip()
+        technical_markers = (
+            "ai语义分类",
+            "board_policy",
+            "require_hashtag",
+            "validation_issue",
+            "置信度",
+            "模型",
+        )
+        if len(reason) <= 120 and not any(marker in reason.casefold() for marker in technical_markers):
+            return reason
     summary = str((item.get("ai_analysis") or {}).get("summary") or "").strip()
-    if summary:
-        return f"{prefix}{summary}"
-    return f"{prefix}系统综合判断为{detected.display_name}"
+    if summary and len(summary) <= 120 and not any(
+        marker in summary.casefold()
+        for marker in ("board_policy", "require_hashtag", "validation_issue", "模型")
+    ):
+        return summary
+    return (
+        f"内容表现为“{detected.display_name}”，与当前“{current_label}”的发布要求不一致。"
+        "请查看完整内容后确认是否移动。"
+    )

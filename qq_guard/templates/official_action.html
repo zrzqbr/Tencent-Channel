@@ -1,15 +1,15 @@
 {% extends "base.html" %}
-{% block title %}{{ capability.title }} · 发布与互动{% endblock %}
+{% block title %}{{ capability.title }} · 频道管理{% endblock %}
 {% block heading %}{{ capability.title }}{% endblock %}
 {% block page_intro %}<p class="page-subtitle">选择目标并完成这项操作</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('official_capabilities') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回发布与互动</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('official_capabilities') }}"><i class="ri-arrow-left-line" aria-hidden="true"></i>返回频道管理</a>{% endblock %}
 {% block content %}
 <section class="info-banner {{ 'warning-banner' if capability.is_write }}">
-  <strong>{{ '可能删帖或影响成员' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只读取腾讯官方数据' }}</strong>
+  <strong>{{ '可能删帖或影响成员' if capability.is_high_risk else '会修改腾讯频道' if capability.is_write else '只查看频道数据' }}</strong>
   <p>{% if capability.is_write %}先使用“检查填写内容”，确认目标和内容无误后再选择真实执行。真实执行会要求密码、原因和确认。{% else %}选择要查看的对象后直接查询，登录信息等敏感字段不会显示。{% endif %}</p>
 </section>
 <section class="info-banner"><strong>已有数据可以直接选择</strong><p>频道、栏目、帖子和作者会优先显示为下拉选项；评论或回复尚未同步时可以手动填写。</p></section>
-{% if capability.note %}<section class="info-banner warning-banner"><strong>官方使用约束</strong><p>{{ capability.note }}</p></section>{% endif %}
+{% if capability.note %}<details class="operation-note"><summary>查看这项操作的使用条件</summary><p>{{ capability.note }}</p></details>{% endif %}
 {% if error %}<div class="flash error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ error }}</div>{% endif %}
 <section class="panel">
   <div class="panel-title"><div><h2>填写信息</h2><p>带“必填”的项目必须填写；不需要的项目留空。</p></div><span class="risk-pill {{ 'risk-high' if capability.is_high_risk else 'risk-medium' if capability.is_write else 'risk-low' }}">{{ '高风险' if capability.is_high_risk else '会修改' if capability.is_write else '只读取' }}</span></div>
@@ -25,7 +25,7 @@
       </label>
     {% endfor %}
     </div>
-    <details class="advanced-parameters"><summary>高级填写项</summary><p>只有当前操作明确需要复杂数据时才填写。</p><textarea name="advanced_json" rows="5" placeholder='{"字段名":"值"}'></textarea></details>
+    <details class="advanced-parameters"><summary>其他填写项（通常不用）</summary><p>仅供维护人员处理特殊操作，日常管理请保持为空。</p><textarea name="advanced_json" rows="5" aria-label="特殊操作补充数据"></textarea></details>
     {% if capability.is_write %}
     <fieldset class="execution-box"><legend>执行方式</legend>
       <label class="radio-option"><input type="radio" name="execution_mode" value="preview" checked><span><strong>检查填写内容</strong><small>不会修改腾讯频道</small></span></label>
@@ -42,6 +42,6 @@
   </form>
 </section>
 {% if result is not none %}
-<section class="panel official-result"><div class="panel-title"><div><h2>操作结果</h2><p>敏感登录信息已经隐藏，本次操作已写入操作记录。</p></div></div><pre>{{ result|tojson(indent=2) }}</pre></section>
+<section class="panel official-result"><div class="panel-title"><div><h2>操作结果</h2><p>本次结果已进入操作记录，敏感登录信息不会显示。</p></div><span class="mode-badge {{ 'warning' if not result_view.success }}"><i></i>{{ '已完成' if result_view.success else '未完成' }}</span></div><div class="official-result-summary"><strong>{{ result_view.title }}</strong>{% if result_view.count is not none %}<p>共返回 {{ result_view.count }} 条数据</p>{% endif %}{% for row in result_view.rows %}<dl><dt>{{ row.label }}</dt><dd>{{ row.value }}</dd></dl>{% endfor %}</div><details class="advanced-parameters"><summary>查看完整返回数据</summary><p>仅在排查问题或核对底层字段时查看。</p><pre>{{ result|tojson(indent=2) }}</pre></details></section>
 {% endif %}
 {% endblock %}

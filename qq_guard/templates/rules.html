@@ -1,8 +1,8 @@
 {% extends "base.html" %}
-{% block title %}频道设置 · 腾讯频道治理{% endblock %}
-{% block heading %}频道设置{% endblock %}
+{% block title %}规则与栏目 · 腾讯频道治理{% endblock %}
+{% block heading %}规则与栏目{% endblock %}
 {% block page_intro %}<p class="page-subtitle">管理审核范围、栏目识别和敏感内容规则</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('channels') }}"><i class="ri-community-line" aria-hidden="true"></i>频道与栏目</a><a class="secondary-button" href="{{ url_for('test_content') }}"><i class="ri-flask-line" aria-hidden="true"></i>测试一条内容</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('channels') }}"><i class="ri-community-line" aria-hidden="true"></i>频道与栏目</a><a class="secondary-button" href="{{ url_for('test_content') }}"><i class="ri-file-search-line" aria-hidden="true"></i>检查一条内容</a>{% endblock %}
 {% block content %}
 <section class="panel">
   <div class="panel-title"><div><h2>智能辅助判断</h2><p>帮助管理员理解文字和图片，只提供建议，不会自动删除或修改内容。</p></div><span class="mode-badge {{ 'warning' if ai_status.status == 'missing_key' else 'disabled' if ai_status.status == 'disabled' }}"><i></i>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</span></div>

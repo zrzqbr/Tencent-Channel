@@ -8,7 +8,7 @@
   <p>系统只会执行下方明确列出的内容；任一平台错误都会单独记录，遇到频率限制会立即停止后续删除。</p>
   <div class="selected-delete-list">
     {% for item in items %}
-    <article><div><strong>{{ item.title or item.item_id }}</strong><small>{{ item.guild_name or item.guild_id }} · {{ section_labels.get(item.section, item.section) }} · {{ item.item_id }}</small></div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }} · {{ item.risk_score }}</span></article>
+    <article><div><strong>{{ item.title or item.body|truncate(60) or '无标题内容' }}</strong><small>{{ item.guild_name or '未命名频道' }} · {{ section_labels.get(item.section, item.section) }}</small></div><span class="risk-pill risk-{{ item.risk_level }}">{{ risk_labels.get(item.risk_level, item.risk_level) }}风险</span></article>
     {% endfor %}
   </div>
   <form action="{{ url_for('execute_bulk_delete') }}" method="post" class="stack-form narrow-form" data-confirm-action-form>

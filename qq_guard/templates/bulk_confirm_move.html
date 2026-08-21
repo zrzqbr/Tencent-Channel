@@ -8,7 +8,7 @@
   <p>目标频道：<strong>{{ target.guild_name }}</strong>。这是腾讯频道原帖移动，不会删除或重新发布内容。</p>
   <div class="selected-delete-list">
     {% for item in items %}
-    <article><div><strong>{{ item.title or item.item_id }}</strong><small>当前：{{ section_labels.get(item.section, item.section) }} · {{ item.item_id }}</small></div><span class="pill">→ {{ target.label }}</span></article>
+    <article><div><strong>{{ item.title or item.body|truncate(60) or '无标题内容' }}</strong><small>当前栏目：{{ section_labels.get(item.section, item.section) }}</small></div><span class="pill">→ {{ target.label }}</span></article>
     {% endfor %}
   </div>
   <form action="{{ url_for('execute_bulk_move') }}" method="post" class="stack-form narrow-form" data-confirm-action-form>

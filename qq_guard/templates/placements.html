@@ -6,7 +6,7 @@
 {% block content %}
 <section class="info-banner">
   <strong>确认后只移动原帖，不会重新发布</strong>
-  <p>系统会根据内容判断更合适的栏目；你可以打开原文核对，也可以勾选多条一起调整。</p>
+  <p>系统会根据内容判断更合适的栏目；你可以打开内容详情核对，也可以勾选多条一起调整。</p>
 </section>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
@@ -26,18 +26,17 @@
       <label class="bulk-select-all"><input type="checkbox" data-select-all> 全选本组</label>
       <span>已选择 <strong data-selected-count>0</strong> 条</span>
       <button class="primary-button compact" type="submit" data-bulk-move disabled>调整所选内容</button>
-      <button class="danger-button compact placement-hidden-delete" type="button" data-bulk-delete disabled aria-hidden="true">删除</button>
-      <small>每次最多 20 条；下一步会要求填写原因、输入密码并再次确认。</small>
+      <small>每次最多调整 20 条；下一步会再次确认。</small>
     </div>
     <div class="table-wrap"><table>
       <thead><tr><th>选择</th><th>内容</th><th>当前栏目</th><th>识别结论</th><th>建议目标</th><th>可核对理由</th></tr></thead>
       <tbody>{% for item in group['items'] %}<tr>
-        <td><input type="checkbox" name="review_ids" value="{{ item.id }}" data-review-checkbox aria-label="选择 {{ item.title or item.item_id }}"></td>
-        <td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.guild_name }} · {{ item.item_id }}</small></td>
-        <td>{{ item.current_label }}<small class="subline">{{ item.channel_id }}</small></td>
-        <td><span class="pill">{{ item.detected_label }}</span><small class="subline">置信度 {{ '%.0f%%'|format((item.classification.get('confidence', 0)|float) * 100) }}</small></td>
+        <td><input type="checkbox" name="review_ids" value="{{ item.id }}" data-review-checkbox aria-label="选择 {{ item.title or '无标题内容' }}"></td>
+        <td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a><small class="subline">{{ item.guild_name }}</small></td>
+        <td>{{ item.current_label }}</td>
+        <td><span class="pill">{{ item.detected_label }}</span></td>
         <td><strong class="placement-target">{{ item.move_target.label }}</strong></td>
-        <td class="placement-reason">{{ item.placement_reason }}</td>
+        <td class="placement-reason">{{ item.placement_reason|truncate(150) }}</td>
       </tr>{% endfor %}</tbody>
     </table></div>
   </form>
@@ -50,7 +49,7 @@
 <section class="panel">
   <div class="panel-title"><div><h2>需要人工确定栏目</h2><p>这些内容可能放错位置，但系统暂时无法确定应该调整到哪里。</p></div><span class="pill">{{ attention|length }} 条</span></div>
   <div class="table-wrap"><table><thead><tr><th>内容</th><th>当前栏目</th><th>问题</th><th>处理方式</th></tr></thead><tbody>
-  {% for item in attention %}<tr><td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a></td><td>{{ item.current_label }}</td><td>{{ item.attention_message }}</td><td>打开详情查看原文后再决定。</td></tr>{% endfor %}
+  {% for item in attention %}<tr><td><a class="title-link" href="{{ url_for('review_detail', source='tencent', row_id=item.id) }}">{{ item.title or item.body|truncate(34) or '无标题内容' }}</a></td><td>{{ item.current_label }}</td><td>{{ item.attention_message }}</td><td>打开内容详情核对后再决定。</td></tr>{% endfor %}
   </tbody></table></div>
 </section>
 {% endif %}

@@ -2,10 +2,10 @@
 {% block title %}操作记录 · 腾讯频道治理{% endblock %}
 {% block heading %}操作记录{% endblock %}
 {% block page_intro %}<p class="page-subtitle">追溯每一次审批、调栏、删除与巡检</p>{% endblock %}
-{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('duplicates') }}"><i class="ri-file-copy-2-line" aria-hidden="true"></i>严格去重记录</a>{% endblock %}
+{% block topbar_extra %}<a class="secondary-button" href="{{ url_for('duplicates') }}"><i class="ri-file-copy-2-line" aria-hidden="true"></i>重复内容记录</a>{% endblock %}
 {% block content %}
-<section class="info-banner"><strong>审计记录不可从后台删除</strong><p>登录、规则修改、审核、巡检和真实删除都会记录操作者、目标、请求编号和时间。</p></section>
-<section class="panel"><div class="table-wrap"><table><thead><tr><th>时间</th><th>操作者</th><th>动作</th><th>目标</th><th>请求编号</th><th>详情</th></tr></thead><tbody>
-{% for item in items %}<tr><td>{{ item.created_at|replace('T',' ')|truncate(19, True, '') }}</td><td>{{ item.actor }}</td><td><span class="pill">{{ item.action }}</span></td><td>{{ item.target_type }} / {{ item.target_id }}</td><td class="mono">{{ item.request_id }}</td><td class="small-json">{{ item.details|tojson }}</td></tr>{% else %}<tr><td colspan="6" class="empty">暂无管理员操作</td></tr>{% endfor %}
-</tbody></table></div></section>
+<section class="info-banner"><strong>这里记录后台发生过什么</strong><p>审核、栏目调整、删除、频道管理和设置修改都会自动留痕，记录不能从后台删除。</p></section>
+<nav class="record-tabs" aria-label="操作记录分类"><a class="{{ 'active' if not selected_group }}" href="{{ url_for('audit') }}">全部</a><a class="{{ 'active' if selected_group == 'content' }}" href="{{ url_for('audit', group='content') }}">内容处理 <b>{{ group_counts.content }}</b></a><a class="{{ 'active' if selected_group == 'channel' }}" href="{{ url_for('audit', group='channel') }}">频道管理 <b>{{ group_counts.channel }}</b></a><a class="{{ 'active' if selected_group == 'settings' }}" href="{{ url_for('audit', group='settings') }}">规则设置 <b>{{ group_counts.settings }}</b></a><a class="{{ 'active' if selected_group == 'system' }}" href="{{ url_for('audit', group='system') }}">登录与巡检 <b>{{ group_counts.system }}</b></a></nav>
+<section class="audit-list">{% for item in items %}<article class="audit-item tone-{{ item.tone }}"><div class="audit-time"><strong>{{ item.created_at|cn_time('%m-%d %H:%M') }}</strong><span>{{ item.actor }}</span></div><div class="audit-copy"><h2>{{ item.title }}</h2><p>{{ item.summary }}</p></div><span class="audit-result">{{ item.result }}</span></article>{% else %}<div class="panel empty tall">这个分类下还没有操作记录</div>{% endfor %}</section>
+{% if total_pages > 1 %}<nav class="pagination" aria-label="操作记录翻页">{% if page > 1 %}<a class="secondary-button compact" href="{{ url_for('audit', group=selected_group, page=page-1) }}">上一页</a>{% endif %}<span>第 {{ page }} / {{ total_pages }} 页</span>{% if page < total_pages %}<a class="secondary-button compact" href="{{ url_for('audit', group=selected_group, page=page+1) }}">下一页</a>{% endif %}</nav>{% endif %}
 {% endblock %}

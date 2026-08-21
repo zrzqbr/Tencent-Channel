@@ -256,59 +256,10 @@ def create_app(
         scans = store.scans(limit=5)
         current = GuardConfig.from_file(str(resolved_config))
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
-        suggestions, _ = placement_review(reviews, current)
-        suggestion_by_id = {item["id"]: item for item in suggestions}
+        _prepare_review_items(reviews, current)
         queue_counts = {"allow": 0, "placement": 0, "review": 0, "delete": 0, "incomplete": 0}
         for item in reviews:
-            item["placement_suggestion"] = suggestion_by_id.get(item["id"])
-            item["has_conflict"] = (
-                item.get("risk_level") in {"high", "critical"}
-                and item.get("action") == "allow"
-            ) or (
-                item.get("risk_level") == "low"
-                and item.get("action") == "delete_candidate"
-            )
-            if item["has_conflict"]:
-                item["ui_queue"] = "review"
-            elif item.get("placement_suggestion"):
-                item["ui_queue"] = "placement"
-            elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
-                item["ui_queue"] = "delete"
-            elif item.get("action") == "delete_candidate":
-                item["ui_queue"] = "review"
-            elif current.ai_review.enabled and (
-                item.get("analysis_source") != "ai"
-                or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
-            ):
-                item["ui_queue"] = "incomplete"
-            elif item.get("action") == "review":
-                item["ui_queue"] = "review"
-            else:
-                item["ui_queue"] = "allow"
             queue_counts[item["ui_queue"]] += 1
-
-            summary_text = str(item.get("ai_analysis", {}).get("summary") or "").strip()
-            first_reason = next(
-                (
-                    str(reason.get("message") or "").strip()
-                    for reason in item.get("reasons", [])
-                    if reason.get("message")
-                ),
-                "",
-            )
-            if item["has_conflict"]:
-                item["ui_summary"] = "系统自己拿不准，先别直接处理"
-            elif item["ui_queue"] == "incomplete":
-                item["ui_summary"] = _public_ai_error(item.get("ai_error"))
-            elif item["ui_queue"] == "placement":
-                target_label = item["placement_suggestion"]["move_target"]["label"]
-                item["ui_summary"] = f"内容适合放到{target_label}"
-            elif item["ui_queue"] == "delete":
-                item["ui_summary"] = summary_text or first_reason or "有明确高风险信号，建议进入删除确认"
-            else:
-                item["ui_summary"] = summary_text or first_reason or "没发现明显问题，可以保留"
-            item["guidance"] = _review_guidance(item)
-            _set_review_risk_display(item)
 
         selected_queue = request.args.get("queue", "")
         if selected_queue not in queue_counts:
@@ -351,34 +302,7 @@ def create_app(
         guild_id = request.args.get("guild", "")
         current = GuardConfig.from_file(str(resolved_config))
         items = store.reviews(status=status, risk_level=risk, guild_id=guild_id)
-        suggestions, _ = placement_review(items, current)
-        suggestion_by_id = {item["id"]: item for item in suggestions}
-        for item in items:
-            if item["id"] in suggestion_by_id:
-                item["placement_suggestion"] = suggestion_by_id[item["id"]]
-            item["has_conflict"] = (
-                item.get("risk_level") in {"high", "critical"}
-                and item.get("action") == "allow"
-            ) or (
-                item.get("risk_level") == "low"
-                and item.get("action") == "delete_candidate"
-            )
-            if item["has_conflict"]:
-                item["ui_queue"] = "review"
-            elif item.get("placement_suggestion"):
-                item["ui_queue"] = "placement"
-            elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
-                item["ui_queue"] = "delete"
-            elif item.get("action") == "delete_candidate":
-                item["ui_queue"] = "review"
-            elif current.ai_review.enabled and item.get("analysis_source") != "ai":
-                item["ui_queue"] = "incomplete"
-            elif item.get("action") == "review":
-                item["ui_queue"] = "review"
-            else:
-                item["ui_queue"] = "allow"
-            item["guidance"] = _review_guidance(item)
-            _set_review_risk_display(item)
+        _prepare_review_items(items, current)
         return render_template(
             "reviews.html",
             items=items,
@@ -421,6 +345,7 @@ def create_app(
         if selected_source:
             items = [item for item in items if item.get("analysis_source") == selected_source]
         current = GuardConfig.from_file(str(resolved_config))
+        _prepare_review_items(items, current)
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
         metrics = {
             "total": len(items),
@@ -431,13 +356,23 @@ def create_app(
                 for item in items
             ),
         }
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        page_size = 8
+        total_pages = max(1, (len(items) + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        visible_items = items[(page - 1) * page_size : page * page_size]
         return render_template(
             "ai_analysis.html",
-            items=items,
+            items=visible_items,
             ai_status=ai_status,
             metrics=metrics,
             selected_source=selected_source,
             selected_risk=selected_risk,
+            page=page,
+            total_pages=total_pages,
         )
 
     @app.get("/reviews/<source>/<int:row_id>")
@@ -447,33 +382,8 @@ def create_app(
             item = store.get_review(source, row_id)
         except ValueError:
             abort(404)
-        item["has_conflict"] = (
-            item.get("risk_level") in {"high", "critical"}
-            and item.get("action") == "allow"
-        ) or (
-            item.get("risk_level") == "low"
-            and item.get("action") == "delete_candidate"
-        )
         current = GuardConfig.from_file(str(resolved_config))
-        suggestions, _ = placement_review([item], current)
-        if suggestions:
-            item["placement_suggestion"] = suggestions[0]
-        if item["has_conflict"]:
-            item["ui_queue"] = "review"
-        elif item.get("placement_suggestion"):
-            item["ui_queue"] = "placement"
-        elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
-            item["ui_queue"] = "delete"
-        elif item.get("action") == "delete_candidate":
-            item["ui_queue"] = "review"
-        elif current.ai_review.enabled and item.get("analysis_source") != "ai":
-            item["ui_queue"] = "incomplete"
-        elif item.get("action") == "review":
-            item["ui_queue"] = "review"
-        else:
-            item["ui_queue"] = "allow"
-        item["guidance"] = _review_guidance(item)
-        _set_review_risk_display(item)
+        _prepare_review_items([item], current)
         return render_template(
             "review_detail.html",
             item=item,
@@ -504,7 +414,7 @@ def create_app(
         except ValueError as exc:
             flash(str(exc), "error")
         else:
-            flash("审核结论已保存，并写入操作审计。", "success")
+            flash("处理结果已保存，并进入操作记录。", "success")
         return redirect(url_for("review_detail", source=source, row_id=row_id))
 
     @app.post("/reviews/tencent/<int:row_id>/prepare-delete")
@@ -722,7 +632,7 @@ def create_app(
             if any(item["guild_id"] != target["guild_id"] for item in items):
                 raise ValueError("所选内容必须属于目标栏目的同一个频道")
             if any(item["channel_id"] == target["channel_id"] for item in items):
-                raise ValueError("所选内容中已有帖子位于目标版块，请取消这些帖子后重试")
+                raise ValueError("所选内容中已有帖子位于目标栏目，请取消这些帖子后重试")
         except ValueError as exc:
             flash(str(exc), "error")
             return redirect(url_for("reviews"))
@@ -833,12 +743,50 @@ def create_app(
     @app.get("/duplicates")
     @login_required
     def duplicates():
-        return render_template("duplicates.html", items=store.duplicates())
+        items = [_duplicate_view(item) for item in store.duplicates(limit=300)]
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        page_size = 20
+        total_pages = max(1, (len(items) + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        return render_template(
+            "duplicates.html",
+            items=items[(page - 1) * page_size : page * page_size],
+            page=page,
+            total_pages=total_pages,
+        )
 
     @app.get("/audit")
     @login_required
     def audit():
-        return render_template("audit.html", items=store.audit_log(), scans=store.scans())
+        selected_group = request.args.get("group", "")
+        if selected_group not in {"", "content", "channel", "settings", "system"}:
+            selected_group = ""
+        items = [_audit_view(item) for item in store.audit_log(limit=300)]
+        group_counts = {
+            key: sum(item["group"] == key for item in items)
+            for key in ("content", "channel", "settings", "system")
+        }
+        if selected_group:
+            items = [item for item in items if item["group"] == selected_group]
+        try:
+            page = max(1, int(request.args.get("page", "1")))
+        except ValueError:
+            page = 1
+        page_size = 20
+        total_pages = max(1, (len(items) + page_size - 1) // page_size)
+        page = min(page, total_pages)
+        visible_items = items[(page - 1) * page_size : page * page_size]
+        return render_template(
+            "audit.html",
+            items=visible_items,
+            selected_group=selected_group,
+            group_counts=group_counts,
+            page=page,
+            total_pages=total_pages,
+        )
 
     @app.get("/official")
     @login_required
@@ -859,7 +807,7 @@ def create_app(
             cli_status["connected"] = bool(login_data.get("valid"))
             cli_status["login"] = str(login_data.get("message") or "已连接")
         except (TencentCliError, OSError, AttributeError, ValueError) as exc:
-            cli_status["error"] = str(exc)[:500]
+            cli_status["error"] = _public_operation_error(exc)
         current = GuardConfig.from_file(str(resolved_config))
         recent_reviews = store.reviews(status="", limit=250)
         return render_template(
@@ -944,13 +892,14 @@ def create_app(
                         remote_ip(),
                     )
                 except (TencentCliError, ValueError, TypeError, json.JSONDecodeError) as exc:
-                    error = str(exc)[:800]
+                    raw_error = str(exc)[:800]
+                    error = _public_operation_error(exc)
                     store.record_audit(
                         "admin",
                         "official.failed",
                         domain,
                         action,
-                        {"error": error},
+                        {"error": raw_error},
                         remote_ip(),
                     )
             return render_template(
@@ -959,12 +908,13 @@ def create_app(
                 schema=schema,
                 form_fields=form_fields,
                 result=result,
+                result_view=_official_result_view(result),
                 error=error,
                 writes_enabled=official_writes_enabled(),
                 official_sources=_official_sources(current, recent_reviews),
             )
         except (TencentCliError, OSError, AttributeError, ValueError) as exc:
-            flash(f"官方能力暂不可用：{str(exc)[:500]}", "error")
+            flash(_public_operation_error(exc), "error")
             return redirect(url_for("official_capabilities"))
 
     @app.get("/rules")
@@ -999,7 +949,7 @@ def create_app(
                 {key: value for key, value in values.items() if "key" not in key.casefold()},
                 remote_ip(),
             )
-            flash(f"AI 审核设置已更新，策略版本为 {version}。", "success")
+            flash("智能判断设置已保存，后续巡检会使用新设置。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
@@ -1019,7 +969,7 @@ def create_app(
         try:
             version = editor.update_moderation(values)
             store.record_audit("admin", "policy.update", "moderation", version, values, remote_ip())
-            flash(f"审核参数已更新，策略版本为 {version}。", "success")
+            flash("处理建议规则已保存，后续巡检会使用新规则。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
@@ -1033,7 +983,7 @@ def create_app(
         try:
             version = editor.update_keywords(values)
             store.record_audit("admin", "policy.update", "classification", version, values, remote_ip())
-            flash(f"分类规则已更新，策略版本为 {version}。", "success")
+            flash("栏目识别规则已保存，后续巡检会使用新规则。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
@@ -1046,7 +996,7 @@ def create_app(
             version = editor.add_sensitive_term(values)
             safe_values = {key: value for key, value in values.items() if key != "csrf_token"}
             store.record_audit("admin", "term.add", "policy", version, safe_values, remote_ip())
-            flash(f"敏感词已添加，策略版本为 {version}。", "success")
+            flash("关注词已添加，后续巡检会自动检查。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
@@ -1057,7 +1007,7 @@ def create_app(
         try:
             version = editor.delete_sensitive_term(index)
             store.record_audit("admin", "term.delete", "policy", version, {"index": index}, remote_ip())
-            flash(f"敏感词已移除，策略版本为 {version}。", "success")
+            flash("关注词已移除。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
@@ -1070,6 +1020,7 @@ def create_app(
             "channels.html",
             boards=raw.get("board_policies", {}),
             channels=raw.get("tencent_channels", []),
+            board_options=_board_options(raw),
             sections=[section for section in Section if section is not Section.UNCLASSIFIED],
         )
 
@@ -1090,7 +1041,7 @@ def create_app(
                 {"policy_version": version, "name": values.get("name", "")},
                 remote_ip(),
             )
-            flash(f"版块规则已保存，策略版本为 {version}。", "success")
+            flash("栏目规则已保存，后续巡检会使用新规则。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("channels"))
@@ -1101,7 +1052,7 @@ def create_app(
         try:
             version = editor.delete_board(channel_id)
             store.record_audit("admin", "board.delete", "channel", channel_id, {"policy_version": version}, remote_ip())
-            flash(f"版块规则已删除，策略版本为 {version}。", "success")
+            flash("栏目规则已删除。", "success")
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("channels"))
@@ -1110,8 +1061,8 @@ def create_app(
     @login_required
     def test_content():
         result = None
+        current = GuardConfig.from_file(str(resolved_config))
         if request.method == "POST":
-            current = GuardConfig.from_file(str(resolved_config))
             item = IncomingContent(
                 platform_item_id=f"admin-test-{int(time.time() * 1000)}",
                 kind=ItemKind.FORUM_THREAD,
@@ -1161,7 +1112,12 @@ def create_app(
                 {"section": classification.section.value, "risk_score": moderation.risk_score},
                 remote_ip(),
             )
-        return render_template("test.html", result=result)
+        raw = editor.snapshot()
+        return render_template(
+            "test.html",
+            result=result,
+            board_options=_board_options(raw),
+        )
 
     @app.post("/scan")
     @login_required
@@ -1338,7 +1294,7 @@ def _official_workflows(capabilities) -> list:
         (
             "review",
             "查清楚",
-            "查看帖子、评论、频道设置，先把事实核对完整。",
+            "查看帖子、评论和频道资料，先把事实核对完整。",
             ("get-feed-detail", "get-channel-timeline-feeds", "get-feed-comments", "get-guild-channel-list"),
         ),
         (
@@ -1350,7 +1306,7 @@ def _official_workflows(capabilities) -> list:
         (
             "publish",
             "发内容",
-            "发布帖子、评论或回复，用官方参数直接提交并保留审计。",
+            "发布帖子、评论或回复，填写所需内容后直接提交并保留记录。",
             ("publish-feed", "do-comment", "do-reply", "quick-publish"),
         ),
         (
@@ -1368,7 +1324,7 @@ def _official_workflows(capabilities) -> list:
         (
             "notice",
             "看通知",
-            "检查官方通知和私信能力；网页治理仍以增量巡检为准。",
+            "查看通知和私信状态，日常内容仍会通过巡检自动同步。",
             ("get-recent-notices", "check-new-notices", "push-group-dm-msg", "notices-status"),
         ),
     ]
@@ -1414,6 +1370,339 @@ def _official_sources(config: GuardConfig, recent_reviews) -> Dict[str, int]:
     return {"guilds": guilds, "channels": channels, "feeds": feeds, "authors": authors}
 
 
+def _prepare_review_items(items: list, config: GuardConfig) -> None:
+    suggestions, _ = placement_review(items, config)
+    suggestion_by_id = {item["id"]: item for item in suggestions}
+    for item in items:
+        item["author_display"] = "频道成员" if item.get("author_id") else "未返回作者信息"
+        item["placement_suggestion"] = suggestion_by_id.get(item["id"])
+        item["has_conflict"] = (
+            item.get("risk_level") in {"high", "critical"}
+            and item.get("action") == "allow"
+        ) or (
+            item.get("risk_level") == "low"
+            and item.get("action") == "delete_candidate"
+        )
+        if item["has_conflict"]:
+            item["ui_queue"] = "review"
+        elif item.get("placement_suggestion"):
+            item["ui_queue"] = "placement"
+        elif item.get("action") == "delete_candidate" and _has_deletion_evidence(item):
+            item["ui_queue"] = "delete"
+        elif item.get("action") == "delete_candidate":
+            item["ui_queue"] = "review"
+        elif config.ai_review.enabled and (
+            item.get("analysis_source") != "ai"
+            or item.get("ai_status") in {"fallback", "failed", "disabled", "not_requested"}
+        ):
+            item["ui_queue"] = "incomplete"
+        elif item.get("action") == "review":
+            item["ui_queue"] = "review"
+        else:
+            item["ui_queue"] = "allow"
+
+        summary = str((item.get("ai_analysis") or {}).get("summary") or "").strip()
+        first_reason = next(
+            (
+                str(reason.get("message") or "").strip()
+                for reason in item.get("reasons", [])
+                if isinstance(reason, dict) and reason.get("message")
+            ),
+            "",
+        )
+        if item["has_conflict"]:
+            item["ui_summary"] = "系统自己拿不准，先查看完整内容"
+        elif item["ui_queue"] == "incomplete":
+            item["ui_summary"] = _public_ai_error(item.get("ai_error"))
+        elif item["ui_queue"] == "placement":
+            target = item["placement_suggestion"]["move_target"]["label"]
+            item["ui_summary"] = f"内容更适合放到“{target}”"
+        elif item["ui_queue"] == "delete":
+            item["ui_summary"] = summary or first_reason or "发现明确高风险信号"
+        else:
+            item["ui_summary"] = summary or first_reason or "没有发现明显问题"
+        item["guidance"] = _review_guidance(item)
+        _set_review_risk_display(item)
+
+
+def _board_options(raw: Dict[str, Any]) -> list:
+    policies = raw.get("board_policies", {}) or {}
+    options = []
+    seen = set()
+    for channel in raw.get("tencent_channels", []) or []:
+        guild_name = str(channel.get("name") or "未命名频道")
+        for section, channel_id in (channel.get("channels", {}) or {}).items():
+            value = str(channel_id)
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            board = policies.get(value, {}) or {}
+            label = str(board.get("name") or f"{guild_name} · {SECTION_LABELS.get(section, section)}")
+            options.append({"value": value, "label": label})
+        for name, channel_id in (channel.get("auto_classify_channels", {}) or {}).items():
+            value = str(channel_id)
+            if not value or value in seen:
+                continue
+            seen.add(value)
+            board = policies.get(value, {}) or {}
+            label = str(board.get("name") or f"{guild_name} · {name}")
+            options.append({"value": value, "label": label})
+    for channel_id, board in policies.items():
+        value = str(channel_id)
+        if value in seen:
+            continue
+        options.append({"value": value, "label": str((board or {}).get("name") or "未命名栏目")})
+    return options
+
+
+def _duplicate_view(item: Dict[str, Any]) -> Dict[str, str]:
+    status = str(item.get("delete_status") or "")
+    result = {
+        "detected_only": "已发现，等待人工处理",
+        "deleted": "已删除后发布的重复内容",
+        "failed": "删除未完成",
+    }.get(status, "已记录")
+    return {
+        "guild_name": str(item.get("guild_name") or "未命名频道"),
+        "section": str(item.get("section") or "unclassified"),
+        "result": result,
+        "error": _public_operation_error(item.get("error")) if status == "failed" else "",
+        "created_at": str(item.get("created_at") or ""),
+    }
+
+
+def _audit_view(item: Dict[str, Any]) -> Dict[str, str]:
+    action = str(item.get("action") or "")
+    details = item.get("details") if isinstance(item.get("details"), dict) else {}
+    group = _audit_group(action)
+    title = {
+        "auth.login": "登录后台",
+        "auth.logout": "退出后台",
+        "auth.failed": "登录失败",
+        "auth.blocked": "登录暂时受限",
+        "review.resolve": "完成内容审核",
+        "delete.prepare": "开始删除确认",
+        "bulk_delete.prepare": "开始批量删除确认",
+        "delete.reauth_failed": "删除密码验证失败",
+        "delete.bulk_reauth_failed": "批量删除密码验证失败",
+        "delete.execute": "删除内容",
+        "move.execute": "调整内容栏目",
+        "move.bulk_reauth_failed": "栏目调整密码验证失败",
+        "official.read": "查看频道资料",
+        "official.preview": "检查频道操作",
+        "official.execute": "执行频道操作",
+        "official.failed": "频道操作失败",
+        "policy.update": "更新审核规则",
+        "term.add": "添加敏感内容词",
+        "term.delete": "移除敏感内容词",
+        "board.upsert": "保存栏目规则",
+        "board.delete": "删除栏目规则",
+        "content.test": "检查一条内容",
+        "scan.run": "完成频道巡检",
+        "scan.failed": "频道巡检未完成",
+        "delete.duplicate_result_ignored": "忽略重复删除结果",
+    }.get(action, "后台操作")
+
+    summary = "操作记录已保存"
+    result = "已记录"
+    tone = "neutral"
+    if action == "review.resolve":
+        resolution = {
+            "approved": "保留内容",
+            "rejected": "记录为不通过",
+            "ignored": "稍后处理",
+            "deleted": "已删除",
+        }.get(str(details.get("resolution") or ""), "完成处理")
+        note = str(details.get("notes") or "").strip()
+        summary = f"处理结果：{resolution}" + (f"；备注：{note}" if note else "")
+        result = "已完成"
+        tone = "success"
+    elif action in {"delete.prepare", "bulk_delete.prepare"}:
+        summary = "已进入二次确认，此时还没有删除频道内容"
+        result = "等待确认"
+        tone = "warning"
+    elif action == "delete.execute":
+        if details.get("status") == "deleted":
+            summary = "频道内容已删除，删除原因已留存"
+            result = "已删除"
+            tone = "danger"
+        else:
+            summary = _public_operation_error(details.get("error"))
+            result = "未完成"
+            tone = "warning"
+    elif action == "move.execute":
+        if details.get("status") == "moved":
+            summary = "内容已移动到管理员确认的目标栏目"
+            result = "已完成"
+            tone = "success"
+        else:
+            summary = _public_operation_error(details.get("error"))
+            result = "未完成"
+            tone = "warning"
+    elif action.startswith("official."):
+        operation = _official_action_label(str(item.get("target_id") or ""))
+        if action == "official.read":
+            summary = f"已通过腾讯频道连接查看：{operation}"
+            result = "已查看"
+            tone = "success"
+        elif action == "official.preview":
+            summary = f"已检查“{operation}”的填写内容，没有修改频道"
+            result = "仅检查"
+        elif action == "official.execute":
+            summary = f"已执行频道操作：{operation}"
+            result = "已完成"
+            tone = "success"
+        else:
+            summary = _public_operation_error(details.get("error"))
+            result = "未完成"
+            tone = "warning"
+    elif action == "scan.run":
+        summary = (
+            f"读取 {int(details.get('scanned_feeds') or 0)} 条内容，"
+            f"新发现 {int(details.get('new_feeds') or 0)} 条，"
+            f"更新 {int(details.get('updated_feeds') or 0)} 条"
+        )
+        result = "已完成"
+        tone = "success"
+    elif action == "scan.failed":
+        summary = _public_operation_error(details.get("error"))
+        result = "未完成"
+        tone = "warning"
+    elif action in {"auth.failed", "auth.blocked", "delete.reauth_failed", "delete.bulk_reauth_failed", "move.bulk_reauth_failed"}:
+        summary = "密码或登录验证没有通过，没有执行后续操作"
+        result = "未执行"
+        tone = "warning"
+    elif action == "auth.login":
+        summary = "管理员已进入后台"
+        result = "成功"
+        tone = "success"
+    elif action == "auth.logout":
+        summary = "管理员已安全退出后台"
+        result = "成功"
+    elif group == "settings":
+        summary = "设置已保存，后续巡检会使用新规则"
+        result = "已保存"
+        tone = "success"
+
+    return {
+        "created_at": str(item.get("created_at") or ""),
+        "actor": "管理员" if item.get("actor") == "admin" else "系统",
+        "title": title,
+        "summary": summary,
+        "result": result,
+        "tone": tone,
+        "group": group,
+    }
+
+
+def _audit_group(action: str) -> str:
+    if action.startswith(("review.", "delete.", "move.")) or action == "bulk_delete.prepare":
+        return "content"
+    if action.startswith("official."):
+        return "channel"
+    if action.startswith(("policy.", "term.", "board.", "content.test")):
+        return "settings"
+    return "system"
+
+
+def _official_action_label(action: str) -> str:
+    return {
+        "get-feed-detail": "查看帖子详情",
+        "get-channel-timeline-feeds": "查看栏目帖子",
+        "get-feed-comments": "查看帖子评论",
+        "get-guild-channel-list": "查看栏目列表",
+        "move-feed": "移动帖子",
+        "alter-feed": "编辑帖子",
+        "top-feed": "设置帖子置顶",
+        "set-feed-essence": "设置精华",
+        "publish-feed": "发布帖子",
+        "do-comment": "处理评论",
+        "do-reply": "处理回复",
+        "del-feed": "删除帖子",
+        "modify-member-shut-up": "设置成员禁言",
+        "kick-guild-member": "移出成员",
+    }.get(action, "频道管理操作")
+
+
+def _public_operation_error(value: Any) -> str:
+    message = str(value or "").strip().casefold()
+    if any(token in message for token in ("retcode=153", "频率上限", "rate limit")):
+        return "腾讯平台当前请求较多，本次操作未完成，请稍后再试"
+    if any(token in message for token in ("invalid ai token", "retcode=8011", "100051")):
+        return "QQ 频道连接已失效，本次操作未完成，请联系管理员重新连接"
+    if "password" in message or "密码" in message:
+        return "管理员密码验证没有通过，没有执行操作"
+    return "本次操作没有完成，请稍后重试"
+
+
+def _official_result_view(result: Any) -> Dict[str, Any]:
+    if result is None:
+        return {"success": False, "title": "", "rows": [], "count": None}
+    if not isinstance(result, dict):
+        return {"success": True, "title": "操作已完成", "rows": [], "count": None}
+    success = bool(result.get("success", True))
+    data = result.get("data", result)
+    rows = []
+    count = None
+    if isinstance(data, list):
+        count = len(data)
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            if key.casefold().replace("-", "_") in {
+                "raw",
+                "token",
+                "cookie",
+                "cursor",
+                "attach_info",
+                "error",
+                "retcode",
+                "ret_code",
+                "code",
+                "request_id",
+                "trace_id",
+            }:
+                continue
+            if isinstance(value, (str, int, float, bool)) and str(value).strip():
+                rows.append({"label": _public_result_label(str(key)), "value": str(value)})
+            elif isinstance(value, list):
+                rows.append({"label": _public_result_label(str(key)), "value": f"{len(value)} 条"})
+            if len(rows) >= 10:
+                break
+    message = str(result.get("message") or "").strip()
+    title = "操作已完成" if success else "操作未完成"
+    if not success:
+        title = _public_operation_error(message or data)
+        rows = []
+        count = None
+    elif message and len(message) <= 120 and not any(
+        token in message.casefold() for token in ("retcode", "request_id", "trace_id")
+    ):
+        title = message
+    return {"success": success, "title": title, "rows": rows, "count": count}
+
+
+def _public_result_label(value: str) -> str:
+    normalized = value.casefold().replace("-", "_")
+    return {
+        "title": "标题",
+        "name": "名称",
+        "nickname": "昵称",
+        "content": "内容",
+        "text": "文字",
+        "description": "说明",
+        "guild_name": "频道",
+        "channel_name": "栏目",
+        "status": "状态",
+        "message": "提示",
+        "total": "总数",
+        "count": "数量",
+        "items": "内容数量",
+        "feeds": "帖子数量",
+        "comments": "评论数量",
+        "members": "成员数量",
+    }.get(normalized, "返回信息")
+
+
 def _official_form_fields(schema: Dict[str, Any], config: GuardConfig, recent_reviews, submitted_values) -> list:
     guild_options = _official_guild_options(config, recent_reviews)
     channel_options = _official_channel_options(config, recent_reviews)
@@ -1434,7 +1723,7 @@ def _official_form_fields(schema: Dict[str, Any], config: GuardConfig, recent_re
         if flag.get("enum"):
             options = [{"value": str(option), "label": str(option)} for option in flag.get("enum") or []]
             input_kind = "select"
-            source_hint = "来自官方枚举"
+            source_hint = "从可用选项中选择"
         else:
             normalized = flag_name.casefold().replace("_", "-")
             if "guild" in normalized:
@@ -1509,7 +1798,7 @@ def _official_guild_options(config: GuardConfig, recent_reviews) -> list:
         options.append(
             {
                 "value": settings.guild_id,
-                "label": f"{settings.name or settings.guild_id} · {settings.guild_id}",
+                "label": settings.name or f"已接入频道 {len(options) + 1}",
             }
         )
     for item in recent_reviews:
@@ -1522,7 +1811,7 @@ def _official_guild_options(config: GuardConfig, recent_reviews) -> list:
         options.append(
             {
                 "value": guild_id,
-                "label": f"{item.get('guild_name') or guild_id} · {guild_id}",
+                "label": item.get("guild_name") or f"已同步频道 {len(options) + 1}",
             }
         )
     return options
@@ -1539,7 +1828,7 @@ def _official_channel_options(config: GuardConfig, recent_reviews) -> list:
         options.append(
             {
                 "value": target["channel_id"],
-                "label": f"{target['guild_name']} · {target['label']} · {target['channel_id']}",
+                "label": f"{target['guild_name']} · {target['label']}",
             }
         )
     for item in recent_reviews:
@@ -1552,7 +1841,7 @@ def _official_channel_options(config: GuardConfig, recent_reviews) -> list:
         options.append(
             {
                 "value": key[1],
-                "label": f"{item.get('guild_name') or item.get('guild_id') or key[0]} · {SECTION_LABELS.get(item.get('section'), item.get('section'))} · {key[1]}",
+                "label": f"{item.get('guild_name') or '未命名频道'} · {SECTION_LABELS.get(item.get('section'), item.get('section'))}",
             }
         )
     return options
@@ -1575,7 +1864,7 @@ def _official_feed_options(recent_reviews) -> list:
         options.append(
             {
                 "value": feed_id,
-                "label": f"{item.get('guild_name') or item.get('guild_id')} · {section_name} · {title} · {feed_id}",
+                "label": f"{item.get('guild_name') or '未命名频道'} · {section_name} · {title}",
             }
         )
     return options
@@ -1597,7 +1886,7 @@ def _official_author_options(recent_reviews) -> list:
         options.append(
             {
                 "value": author_id,
-                "label": f"{author_id} · {title}" if title else author_id,
+                "label": f"《{title}》的发布者" if title else f"最近内容发布者 {len(options) + 1}",
             }
         )
     return options
@@ -1667,18 +1956,19 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
     issue_type = _reason_type(primary)
     message = str(primary.get("message") or "").strip()
     evidence = str(primary.get("evidence") or "").strip()
-    score_parts = [
-        f"{_reason_type(reason)} +{int(reason.get('score') or 0)}"
-        for reason in scored[:3]
-    ]
-    score_detail = "、".join(score_parts) if score_parts else "现有理由没有提供可核对的风险加分项"
+    score_parts = [_reason_type(reason) for reason in scored[:3]]
+    score_detail = (
+        f"主要关注：{'、'.join(score_parts)}"
+        if score_parts
+        else "当前没有发现需要重点关注的具体问题"
+    )
 
     if item.get("has_conflict"):
         return {
             "status": "系统结论不一致",
             "action": "查看完整内容后决定",
             "issue": "两项检查结果不一致",
-            "why": f"风险分是 {int(item.get('risk_score') or 0)} 分，但处理建议又是“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”；平台已拦住一键处理。",
+            "why": f"风险判断和“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”建议互相矛盾，系统已停止直接处理。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
             "score": score_detail,
         }
@@ -1763,14 +2053,13 @@ def _has_deletion_evidence(item: Dict[str, Any]) -> bool:
 
 
 def _set_review_risk_display(item: Dict[str, Any]) -> None:
-    score = int(item.get("risk_score") or 0)
     if item.get("action") == "delete_candidate" and not _has_deletion_evidence(item):
         item["ui_risk_level"] = "medium"
-        item["risk_text"] = f"累计风险分 {score}"
+        item["risk_text"] = "需要人工判断"
         return
     risk_level = str(item.get("risk_level") or "low")
     item["ui_risk_level"] = risk_level
-    item["risk_text"] = f"{RISK_LABELS.get(risk_level, risk_level)}风险 {score}"
+    item["risk_text"] = f"{RISK_LABELS.get(risk_level, risk_level)}风险"
 
 
 def _cn_time(value: Any, format_string: str = "%Y-%m-%d %H:%M") -> str:

@@ -11,8 +11,8 @@
       <span class="risk-pill risk-{{ item.ui_risk_level }}">{{ item.risk_text }}</span>
     </div>
     <dl class="meta-grid">
-      <div><dt>所在频道</dt><dd>{{ item.guild_name or item.guild_id }}</dd></div><div><dt>所在栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div>
-      <div><dt>作者</dt><dd>{{ item.author_id or '未返回' }}</dd></div><div><dt>发现时间</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
+      <div><dt>所在频道</dt><dd>{{ item.guild_name or '未命名频道' }}</dd></div><div><dt>所在栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div>
+      <div><dt>作者</dt><dd>{{ item.author_display }}</dd></div><div><dt>发现时间</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
       <div><dt>判断方式</dt><dd>{{ '智能判断' if item.analysis_source == 'ai' else '基础内容检查' }}</dd></div><div><dt>当前处理状态</dt><dd>{{ status_labels.get(item.review_status, item.review_status) }}</dd></div>
     </dl>
     <section class="detail-recommendation">
@@ -31,10 +31,10 @@
     {% if item.ai_analysis.get('vision_analysis') %}<h3>图片检查说明</h3><div class="content-box">{{ item.ai_analysis.vision_analysis }}</div>{% endif %}
     {% if item.ai_error %}<div class="info-banner"><strong>智能判断暂时不可用</strong><p>{{ item.ai_error|public_ai_error }}</p></div>{% endif %}
     <h3>正文</h3><div class="content-box">{{ item.body or '未保存正文；下次巡检将补齐完整内容。' }}</div>
-    {% if item.media_urls %}<h3>媒体信息</h3><div class="content-box mono">{{ item.media_urls|tojson }}</div>{% endif %}
+    {% if item.media_urls %}<h3>图片或视频</h3><div class="content-box media-list">{% for media_url in item.media_urls %}<a href="{{ media_url }}" target="_blank" rel="noopener">打开第 {{ loop.index }} 个媒体内容</a>{% endfor %}</div>{% endif %}
     <h3>具体原因</h3>
     <div class="reason-list">
-      {% for reason in item.reasons %}<article><div><strong>{{ reason.message or '该项没有给出说明' }}</strong><span>{{ risk_labels.get(reason.severity, reason.severity) }}风险</span></div><b>风险影响 +{{ reason.score or 0 }}</b>{% if reason.evidence %}<p><strong>原文证据：</strong>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有发现敏感词、违规推广、联系方式泄露或栏目硬规则问题。</p>{% endfor %}
+      {% for reason in item.reasons %}<article><div><strong>{{ reason.message or '该项没有给出说明' }}</strong><span>{{ risk_labels.get(reason.severity, reason.severity) }}风险</span></div>{% if reason.evidence %}<p><strong>原文证据：</strong>{{ reason.evidence }}</p>{% endif %}</article>{% else %}<p class="empty">没有发现敏感词、违规推广、联系方式泄露或栏目硬规则问题。</p>{% endfor %}
     </div>
   </section>
   <aside class="panel decision-panel">

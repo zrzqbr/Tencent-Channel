@@ -110,8 +110,8 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
   const update = () => {
     const selected = checkboxes.filter((checkbox) => checkbox.checked).length;
     count.textContent = String(selected);
-    submit.disabled = selected === 0 || selected > 20;
-    moveButton.disabled = selected === 0 || selected > 20 || !moveTarget.value;
+    if (submit) submit.disabled = selected === 0 || selected > 20;
+    if (moveButton) moveButton.disabled = selected === 0 || selected > 20 || !moveTarget?.value;
     selectAll.checked = checkboxes.length > 0 && selected === checkboxes.length;
     selectAll.indeterminate = selected > 0 && selected < checkboxes.length;
   };
@@ -120,7 +120,7 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
     update();
   });
   checkboxes.forEach((checkbox) => checkbox.addEventListener('change', update));
-  moveTarget.addEventListener('change', update);
+  if (moveTarget) moveTarget.addEventListener('change', update);
   update();
 });
 
@@ -164,4 +164,30 @@ document.querySelectorAll('[data-official-form]').forEach((form) => {
   };
   modes.forEach((item) => item.addEventListener('change', update));
   update();
+});
+
+document.querySelectorAll('[data-board-policy-form]').forEach((form) => {
+  const select = form.querySelector('[data-board-policy-select]');
+  if (!select) return;
+  let policies = {};
+  try {
+    policies = JSON.parse(form.dataset.boardPolicies || '{}');
+  } catch (error) {
+    policies = {};
+  }
+  const name = form.querySelector('[name="name"]');
+  const minLength = form.querySelector('[name="min_text_length"]');
+  const requireHashtag = form.querySelector('[name="require_hashtag"]');
+  const allowExternalLinks = form.querySelector('[name="allow_external_links"]');
+  const sectionInputs = Array.from(form.querySelectorAll('[name="expected_sections"]'));
+  select.addEventListener('change', () => {
+    if (!select.value) return;
+    const policy = policies[select.value] || {};
+    const expectedSections = new Set(policy.expected_sections || []);
+    name.value = policy.name || select.selectedOptions[0]?.textContent.trim() || '';
+    minLength.value = String(policy.min_text_length ?? 4);
+    requireHashtag.checked = Boolean(policy.require_hashtag);
+    allowExternalLinks.checked = policy.allow_external_links !== false;
+    sectionInputs.forEach((input) => { input.checked = expectedSections.has(input.value); });
+  });
 });
