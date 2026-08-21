@@ -124,24 +124,6 @@ document.querySelectorAll('[data-bulk-form]').forEach((form) => {
   update();
 });
 
-const reviewDrawer = document.querySelector('[data-review-drawer]');
-if (reviewDrawer) {
-  document.querySelectorAll('[data-review-link]').forEach((link) => {
-    link.addEventListener('click', (event) => {
-      if (window.matchMedia('(max-width: 1100px)').matches) return;
-      const key = link.dataset.reviewLink;
-      const template = document.querySelector(`[data-review-template="${CSS.escape(key)}"]`);
-      if (!template) return;
-      event.preventDefault();
-      reviewDrawer.innerHTML = template.innerHTML;
-      document.querySelectorAll('[data-review-row]').forEach((row) => {
-        row.classList.toggle('selected', row.dataset.reviewRow === key);
-      });
-      window.history.replaceState(null, '', link.dataset.dashboardUrl || window.location.href);
-    });
-  });
-}
-
 document.querySelectorAll('[data-confirm-action-form]').forEach((form) => {
   form.addEventListener('submit', () => {
     const button = form.querySelector('[data-confirm-submit]');

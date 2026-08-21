@@ -281,17 +281,21 @@ class WebTests(unittest.TestCase):
         self.assertIn("全部内容".encode("utf-8"), response.data)
         self.assertIn("内容审核".encode("utf-8"), response.data)
 
-    def test_dashboard_exposes_task_queues_and_review_drawer(self):
+    def test_dashboard_exposes_task_queues_as_actionable_content_cards(self):
         self.insert_tencent_review()
         response = self.login()
         self.assertIn("先处理这些".encode("utf-8"), response.data)
         self.assertIn("调整栏目".encode("utf-8"), response.data)
-        self.assertIn("查看原帖".encode("utf-8"), response.data)
+        self.assertIn("需要核对".encode("utf-8"), response.data)
         self.assertIn("确认保留".encode("utf-8"), response.data)
-        self.assertIn("为什么到这里".encode("utf-8"), response.data)
+        self.assertIn("为什么需要处理".encode("utf-8"), response.data)
+        self.assertIn("建议下一步".encode("utf-8"), response.data)
+        self.assertIn("查看完整内容".encode("utf-8"), response.data)
+        self.assertIn(b"data-review-card", response.data)
+        self.assertNotIn(b'class="queue-header"', response.data)
+        self.assertNotIn(b'class="review-drawer"', response.data)
         self.assertNotIn(b"built-in method clear", response.data)
-        self.assertIn("发现了什么".encode("utf-8"), response.data)
-        self.assertIn("查看证据和风险说明".encode("utf-8"), response.data)
+        self.assertIn("查看判断依据".encode("utf-8"), response.data)
 
     def test_quality_scores_without_high_risk_evidence_do_not_suggest_delete(self):
         row_id = self.insert_tencent_review(title="哈哈哈哈哈")
@@ -370,6 +374,8 @@ class WebTests(unittest.TestCase):
 
     def test_utc_scan_time_is_displayed_as_beijing_time(self):
         self.assertEqual(_cn_time("2026-08-20T06:18:00+00:00"), "2026-08-20 14:18")
+        self.assertEqual(_cn_time("1787123462"), "2026-08-19 15:11")
+        self.assertEqual(_cn_time("1787123462000"), "2026-08-19 15:11")
 
     def test_review_detail_explains_sensitive_term_without_internal_score(self):
         row_id = self.insert_tencent_review()

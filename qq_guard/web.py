@@ -290,21 +290,11 @@ def create_app(
                 "clear",
             )
         visible_reviews = [item for item in reviews if item["dashboard_task"] == selected_task]
-        selected_key = request.args.get("selected", "")
-        selected_item = next(
-            (
-                item
-                for item in visible_reviews
-                if f"{item['source']}-{item['id']}" == selected_key
-            ),
-            visible_reviews[0] if visible_reviews else None,
-        )
         return render_template(
             "dashboard.html",
             summary=summary,
             reviews=visible_reviews,
             all_pending_reviews=reviews,
-            selected_item=selected_item,
             selected_task=selected_task,
             queue_counts=queue_counts,
             task_counts=task_counts,
@@ -2037,6 +2027,12 @@ def _cn_time(value: Any, format_string: str = "%Y-%m-%d %H:%M") -> str:
     if not text:
         return "尚未巡检"
     try:
+        if text.replace(".", "", 1).isdigit():
+            timestamp = float(text)
+            if timestamp > 10_000_000_000:
+                timestamp /= 1000
+            parsed = datetime.fromtimestamp(timestamp, timezone.utc)
+            return parsed.astimezone(ZoneInfo("Asia/Shanghai")).strftime(format_string)
         parsed = datetime.fromisoformat(text.replace("Z", "+00:00"))
         if parsed.tzinfo is None:
             parsed = parsed.replace(tzinfo=timezone.utc)

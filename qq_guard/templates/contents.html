@@ -29,7 +29,7 @@
       <span><i class="ri-community-line" aria-hidden="true"></i>{{ item.guild_name }}</span>
       <span><i class="ri-layout-grid-line" aria-hidden="true"></i>{{ item.channel_name }}</span>
       <span><i class="ri-user-3-line" aria-hidden="true"></i>{{ item.author_name }}</span>
-      <span><i class="ri-time-line" aria-hidden="true"></i>{{ item.source_created_at }}</span>
+      <span><i class="ri-time-line" aria-hidden="true"></i>{{ item.source_created_at|cn_time }}</span>
       <span class="sync-state"><i class="ri-checkbox-circle-line" aria-hidden="true"></i>{{ '正文已同步' if item.sync_complete else '列表已同步' }}</span>
     </div>
     <p class="content-preview">{{ item.body|striptags|truncate(220) or '这条内容暂时没有正文摘要。' }}</p>

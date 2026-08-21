@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "qq-channel-content-guard"
-version = "0.7.1"
+version = "0.7.2"
 description = "QQ频道可解释分类、内容审核、连续去重与人工复核工具"
 readme = "README.md"
 requires-python = ">=3.9"
