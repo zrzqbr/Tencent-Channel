@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.6.0（已接入腾讯官方 Skill 能力中心与帖子分页增量统计）
+- Python 包版本：0.7.0（全频道同步、完整内容目录与一步式人工操作）
 
 ## 2. 当前生产快照
 
@@ -516,7 +516,7 @@ admin_audit_actions = 105
 1. 已完成桌面与 390px 手机视口验证；后续新增页面仍需保持无横向溢出和操作文字不换行。
 2. AI 原始理由仍可能出现英文、内部分类名（official_news）或低质量词（test），需中文标准化或强化校验。
 3. 状态色需更明显，但不能只依赖颜色。
-4. 静态资源增加版本参数或内容哈希，避免旧缓存。
+4. 静态资源已带版本参数；后续发布修改 CSS/JS 时同步更新版本号。
 5. 用更日常的语言解释“需人工核对”和“AI 未完整分析”。
 
 ### P1：巡检调度
