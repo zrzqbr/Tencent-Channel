@@ -1,5 +1,6 @@
 import json
 import os
+import re
 import secrets
 import threading
 import time
@@ -50,7 +51,7 @@ SECTION_LABELS = {section.value: section.display_name for section in Section}
 RISK_LABELS = {"low": "低", "medium": "中", "high": "高", "critical": "严重"}
 ACTION_LABELS = {
     "allow": "没有发现问题",
-    "review": "需要人工判断",
+    "review": "需要人工核对",
     "delete_candidate": "可能违规",
 }
 STATUS_LABELS = {
@@ -124,6 +125,7 @@ def create_app(
     app = Flask(__name__)
     app.jinja_env.filters["cn_time"] = _cn_time
     app.jinja_env.filters["public_ai_error"] = _public_ai_error
+    app.jinja_env.filters["plain_ai_text"] = _plain_ai_text
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config.update(
         SECRET_KEY=os.environ.get("QQ_GUARD_SECRET_KEY", ""),
@@ -1872,13 +1874,28 @@ def _official_placeholder(name: str, value_type: str) -> str:
 def _public_ai_error(value: Any) -> str:
     message = str(value or "").strip()
     if not message:
-        return "智能判断尚未完成，请查看完整内容后人工确认"
+        return "智能判断尚未完成，需要管理员人工核对"
     normalized = message.casefold()
     if any(token in normalized for token in ("api_key", "api 密钥", "tokenhub", "缺少腾讯云")):
-        return "智能判断服务尚未连接，请查看完整内容后人工确认"
+        return "智能判断服务尚未连接，需要管理员人工核对"
     if "尚未启用" in message or "未启用" in message:
-        return "智能判断服务尚未开启，请查看完整内容后人工确认"
-    return "智能判断服务暂时不可用，请查看完整内容后人工确认"
+        return "智能判断服务尚未开启，需要管理员人工核对"
+    return "智能判断服务暂时不可用，需要管理员人工核对"
+
+
+def _plain_ai_text(value: Any) -> str:
+    """把模型常见的 Markdown 列表整理成直接可读的短句。"""
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    lines = []
+    for line in text.splitlines():
+        line = re.sub(r"^\s*(?:[-*+•]\s+|\d+[.)]\s+|#+\s+)", "", line)
+        line = re.sub(r"(?:\*\*|__|`)", "", line)
+        line = re.sub(r"[ \t]+", " ", line).strip()
+        if line:
+            lines.append(line)
+    return "\n".join(lines)
 
 
 def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
@@ -1925,10 +1942,10 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
 
     if item.get("has_conflict"):
         return {
-            "status": "两项判断有分歧",
-            "action": "查看原帖后选择最终处理方式",
-            "issue": "风险提示与处理建议不同",
-            "why": f"系统对风险程度和“{ACTION_LABELS.get(item.get('action'), item.get('action'))}”给出了不同判断，请根据原文和证据作最终决定。",
+            "status": "需要人工核对",
+            "action": "人工核对",
+            "issue": "AI发现了需要确认的风险信号",
+            "why": message or evidence or "AI分析结果需要管理员确认。",
             "evidence": evidence or message or "未提供与高风险分数相匹配的具体证据",
             "score": score_detail,
         }
@@ -1937,7 +1954,7 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         target = suggestion["move_target"]["label"]
         classification_reasons = list((item.get("classification") or {}).get("reasons") or [])
         return {
-            "status": "栏目可能放错",
+            "status": "建议调整栏目",
             "action": f"调整到“{target}”",
             "issue": "内容和当前栏目不匹配",
             "why": suggestion.get("placement_reason") or message or "内容语义与当前栏目定位不一致",
@@ -1946,17 +1963,17 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("ui_queue") == "incomplete":
         return {
-            "status": "信息还不完整",
-            "action": "查看完整内容后决定",
-            "issue": "系统暂时无法完整判断",
-            "why": _public_ai_error(item.get("ai_error")) if item.get("ai_error") else message or "当前只有规则初审结果，平台不会自动处理这条内容",
+            "status": "需要人工核对",
+            "action": "人工核对",
+            "issue": "AI分析没有完成",
+            "why": _public_ai_error(item.get("ai_error")) if item.get("ai_error") else message or "当前只有基础检查结果，需要管理员核对。",
             "evidence": evidence or "暂无完整的文字和图片判断依据",
             "score": score_detail,
         }
     if item.get("action") == "delete_candidate" and not _has_deletion_evidence(item):
         return {
-            "status": "需要人工判断",
-            "action": "查看完整内容后决定",
+            "status": "需要人工核对",
+            "action": "人工核对",
             "issue": issue_type,
             "why": message or "累计风险分较高，但没有足以直接建议删除的高风险证据",
             "evidence": evidence or "当前只有栏目、内容质量或分类不确定等中等风险信号",
@@ -1964,25 +1981,25 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         }
     if item.get("action") == "delete_candidate":
         return {
-            "status": "发现高风险信号",
-            "action": "查看证据后决定是否删除",
+            "status": "建议删除",
+            "action": "删除帖子",
             "issue": issue_type,
             "why": message or "检测到高风险违规信号",
-            "evidence": evidence or "请打开完整详情核对原文证据",
+            "evidence": evidence or message or "检测到高风险违规信号",
             "score": score_detail,
         }
     if item.get("action") == "review":
         return {
-            "status": "需要人工判断",
-            "action": "查看完整内容后决定",
+            "status": "需要人工核对",
+            "action": "人工核对",
             "issue": issue_type,
             "why": message or "存在需要管理员确认的具体信号",
-            "evidence": evidence or "请打开完整详情核对原文或图片",
+            "evidence": evidence or message or "存在需要管理员确认的具体信号",
             "score": score_detail,
         }
     return {
         "status": "没有发现问题",
-        "action": "可以保留",
+        "action": "确认保留",
         "issue": "未发现明确违规",
         "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与智能判断均未发现需要处置的问题"),
         "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
@@ -2015,7 +2032,7 @@ def _has_deletion_evidence(item: Dict[str, Any]) -> bool:
 def _set_review_risk_display(item: Dict[str, Any]) -> None:
     if item.get("action") == "delete_candidate" and not _has_deletion_evidence(item):
         item["ui_risk_level"] = "medium"
-        item["risk_text"] = "需要人工判断"
+        item["risk_text"] = "需要人工核对"
         return
     risk_level = str(item.get("risk_level") or "low")
     item["ui_risk_level"] = risk_level

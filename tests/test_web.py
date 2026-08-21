@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash
 from qq_guard.admin_store import AdminStore
 from qq_guard.scan_control import ScanLock
 from qq_guard.tencent_cli import TencentCliError
-from qq_guard.web import _cn_time, create_app
+from qq_guard.web import _cn_time, _plain_ai_text, create_app
 
 
 TEST_PASSWORD = "test-only-password-9!"
@@ -183,6 +183,12 @@ class WebTests(unittest.TestCase):
         self.env_patch.stop()
         self.temp.cleanup()
 
+    def test_plain_ai_text_removes_markdown_symbols(self):
+        self.assertEqual(
+            _plain_ai_text("**发现风险**\n- 图片包含外部联系方式\n2. 建议人工核对"),
+            "发现风险\n图片包含外部联系方式\n建议人工核对",
+        )
+
     @staticmethod
     def csrf(response) -> str:
         match = re.search(rb'name="csrf_token" value="([^"]+)"', response.data)
@@ -288,14 +294,27 @@ class WebTests(unittest.TestCase):
         self.assertIn("调整栏目".encode("utf-8"), response.data)
         self.assertIn("需要核对".encode("utf-8"), response.data)
         self.assertIn("确认保留".encode("utf-8"), response.data)
-        self.assertIn("为什么需要处理".encode("utf-8"), response.data)
+        self.assertIn("AI分析出了什么".encode("utf-8"), response.data)
         self.assertIn("建议下一步".encode("utf-8"), response.data)
-        self.assertIn("查看完整内容".encode("utf-8"), response.data)
+        self.assertIn("查看并处理".encode("utf-8"), response.data)
         self.assertIn(b"data-review-card", response.data)
         self.assertNotIn(b'class="queue-header"', response.data)
         self.assertNotIn(b'class="review-drawer"', response.data)
         self.assertNotIn(b"built-in method clear", response.data)
-        self.assertIn("查看判断依据".encode("utf-8"), response.data)
+        self.assertNotIn("查看判断依据".encode("utf-8"), response.data)
+        self.assertNotIn("两项判断不一致".encode("utf-8"), response.data)
+
+    def test_conflicting_ai_result_is_described_as_manual_check(self):
+        row_id = self.insert_tencent_review()
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                "UPDATE tencent_moderation_findings SET action = 'allow', risk_level = 'high' WHERE id = ?",
+                (row_id,),
+            )
+        response = self.login()
+        self.assertIn("人工核对".encode("utf-8"), response.data)
+        self.assertIn("AI发现了需要确认的风险信号".encode("utf-8"), response.data)
+        self.assertNotIn("风险提示与处理建议不同".encode("utf-8"), response.data)
 
     def test_dashboard_review_card_includes_original_post_link(self):
         self.insert_cached_content(feed_id="feed-original")
@@ -335,9 +354,9 @@ class WebTests(unittest.TestCase):
 
         response = self.login()
 
-        self.assertIn("需要人工判断".encode("utf-8"), response.data)
+        self.assertIn("人工核对".encode("utf-8"), response.data)
         self.assertIn("疑似灌水或测试内容".encode("utf-8"), response.data)
-        self.assertNotIn("你可以：查看证据后决定是否删除".encode("utf-8"), response.data)
+        self.assertNotIn("查看证据后决定是否删除".encode("utf-8"), response.data)
 
     def test_official_page_groups_tools_by_admin_tasks(self):
         self.login()
@@ -650,10 +669,11 @@ class WebTests(unittest.TestCase):
         self.login()
         response = self.client.get(f"/reviews/tencent/{row_id}")
         self.assertEqual(response.status_code, 200)
-        self.assertIn("系统检查结果".encode("utf-8"), response.data)
-        self.assertIn("还没有完整的智能判断".encode("utf-8"), response.data)
+        self.assertIn("AI分析结果".encode("utf-8"), response.data)
+        self.assertIn("AI分析状态".encode("utf-8"), response.data)
+        self.assertIn("AI分析理由".encode("utf-8"), response.data)
         self.assertIn("图片检查".encode("utf-8"), response.data)
-        self.assertIn("文字综合判断".encode("utf-8"), response.data)
+        self.assertNotIn("文字综合判断".encode("utf-8"), response.data)
 
     def test_ai_analysis_page_exposes_conclusion_or_fallback_reason(self):
         self.insert_tencent_review()
@@ -661,7 +681,7 @@ class WebTests(unittest.TestCase):
         response = self.client.get("/ai-analysis")
         self.assertEqual(response.status_code, 200)
         self.assertIn("判断记录".encode("utf-8"), response.data)
-        self.assertIn("需要人工补充判断".encode("utf-8"), response.data)
+        self.assertIn("需要人工核对".encode("utf-8"), response.data)
         self.assertIn("当前只有基础内容检查结果".encode("utf-8"), response.data)
         self.assertIn("命中英文敏感词".encode("utf-8"), response.data)
 
@@ -686,7 +706,7 @@ class WebTests(unittest.TestCase):
         self.assertIn("第 1 / 2 页".encode("utf-8"), response.data)
         response = self.client.get("/ai-analysis?page=2")
         self.assertEqual(response.data.count(b'class="panel analysis-record"'), 1)
-        self.assertIn("需要人工判断".encode("utf-8"), response.data)
+        self.assertIn("需要人工核对".encode("utf-8"), response.data)
         self.assertNotIn("发现高风险信号".encode("utf-8"), response.data)
 
     def test_audit_page_hides_internal_fields_and_paginates(self):

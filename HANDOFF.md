@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.7.3（工作台原帖直达、文字与图片 AI 巡检结果展示）
+- Python 包版本：0.7.4（审核理由与下一步重新排版、冲突提示简化）
 
 ## 2. 当前生产快照
 
@@ -146,6 +146,13 @@ QQ 频道新内容
 - 手动点击“立即巡检”后，进度区明确展示文字 AI 判断、图片检查和需要人工补充的数量。
 - 巡检报告新增图片检查完成与图片检查失败统计；旧数据库启动时自动补齐字段，保持现有生产数据库兼容。
 
+### 0.7.4：管理员能直接看懂 AI 结论
+
+- 工作台卡片统一只显示“AI分析出了什么”和“建议下一步”，不再显示“风险提示与处理建议不同”等技术解释。
+- 下一步统一使用“删除帖子、调整栏目、确认保留、人工核对”等明确动作。
+- “查看并处理”页面按 AI 结果、分析理由、图片检查、原帖正文、下一步操作排列，删除重复的系统检查步骤和风险分数说明。
+- AI 返回的 Markdown 星号、短横线和数字列表会整理为普通中文短句，图片检查说明可直接阅读。
+
 ### 0.6.0：腾讯官方 Skill 全能力入口
 
 - 官方 Skill 基线为 `tencent-channel-community 1.1.5`，后台“官方能力”页面从服务器 CLI 实时读取 Schema，因此腾讯后续新增命令可自动出现在能力目录。
@@ -241,7 +248,7 @@ cp config.example.json config.json
 .venv/bin/python -m unittest discover -s tests -v
 ~~~
 
-交接前最后一次结果：85 tests OK。
+交接前最后一次结果：87 tests OK。
 
 本地 config.json 已被 .gitignore 忽略。不要把生产凭据写入测试文件。本地网页只用于界面和单元测试，不要在本机再次执行 tencent-channel-cli login，原因见第 11 节。
 
