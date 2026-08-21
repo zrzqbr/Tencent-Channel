@@ -86,6 +86,8 @@ class ScanReport:
     moderation_findings: Tuple[ModerationFinding, ...]
     ai_reviewed: int = 0
     ai_fallbacks: int = 0
+    ai_vision_reviewed: int = 0
+    ai_vision_fallbacks: int = 0
     ai_model: str = ""
     new_feeds: int = 0
     updated_feeds: int = 0
@@ -116,6 +118,8 @@ class ScanReport:
             "delete_mode": self.delete_mode,
             "ai_reviewed": self.ai_reviewed,
             "ai_fallbacks": self.ai_fallbacks,
+            "ai_vision_reviewed": self.ai_vision_reviewed,
+            "ai_vision_fallbacks": self.ai_vision_fallbacks,
             "ai_model": self.ai_model,
             "new_feeds": self.new_feeds,
             "updated_feeds": self.updated_feeds,
@@ -185,6 +189,8 @@ class TencentChannelMonitor:
         self.progress_callback = progress_callback
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
+        self._ai_vision_reviewed = 0
+        self._ai_vision_fallbacks = 0
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
@@ -201,6 +207,8 @@ class TencentChannelMonitor:
         guild_names: List[str] = []
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
+        self._ai_vision_reviewed = 0
+        self._ai_vision_fallbacks = 0
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
@@ -272,6 +280,8 @@ class TencentChannelMonitor:
             moderation_findings=tuple(moderation_findings),
             ai_reviewed=self._ai_reviewed,
             ai_fallbacks=self._ai_fallbacks,
+            ai_vision_reviewed=self._ai_vision_reviewed,
+            ai_vision_fallbacks=self._ai_vision_fallbacks,
             ai_model=self.config.ai_review.model if self.config.ai_review.enabled else "",
             new_feeds=self._new_feeds,
             updated_feeds=self._updated_feeds,
@@ -701,6 +711,11 @@ class TencentChannelMonitor:
         ai_model = self.config.ai_review.model if self.config.ai_review.enabled else ""
         ai_confidence: Optional[float] = None
         ai_error = ""
+        image_check_requested = bool(
+            self.config.ai_review.include_images
+            and self.config.ai_review.max_images > 0
+            and item.media_urls
+        )
         ai_analysis: Dict[str, Any] = {
             "rule_signals": [
                 {
@@ -730,8 +745,12 @@ class TencentChannelMonitor:
                 ai_model = ai.model
                 ai_confidence = ai.classification_confidence
                 ai_error = ai.error
-                if ai.vision_status == "failed":
+                if ai.vision_status in {"completed", "cached"}:
+                    self._ai_vision_reviewed += 1
+                elif ai.vision_status == "failed":
                     self._ai_fallbacks += 1
+                    if image_check_requested:
+                        self._ai_vision_fallbacks += 1
                 ai_analysis.update(
                     {
                         "provider": ai.provider,
@@ -750,6 +769,8 @@ class TencentChannelMonitor:
                 )
             except AIReviewUnavailable as exc:
                 self._ai_fallbacks += 1
+                if image_check_requested:
+                    self._ai_vision_fallbacks += 1
                 ai_error = str(exc)[:500]
                 ai_analysis["error"] = ai_error
         if assessment.action.value == "allow" and not assessment.reasons:
@@ -881,6 +902,8 @@ class TencentChannelMonitor:
                     classification_json TEXT NOT NULL DEFAULT '{}',
                     ai_reviewed INTEGER NOT NULL DEFAULT 0,
                     ai_fallbacks INTEGER NOT NULL DEFAULT 0,
+                    ai_vision_reviewed INTEGER NOT NULL DEFAULT 0,
+                    ai_vision_fallbacks INTEGER NOT NULL DEFAULT 0,
                     ai_model TEXT NOT NULL DEFAULT ''
                 );
                 CREATE TABLE IF NOT EXISTS tencent_duplicate_actions (
@@ -956,6 +979,8 @@ class TencentChannelMonitor:
             )
             self._ensure_column(connection, "tencent_scan_runs", "ai_reviewed", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "ai_fallbacks", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "ai_vision_reviewed", "INTEGER NOT NULL DEFAULT 0")
+            self._ensure_column(connection, "tencent_scan_runs", "ai_vision_fallbacks", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "ai_model", "TEXT NOT NULL DEFAULT ''")
             self._ensure_column(connection, "tencent_scan_runs", "new_feeds", "INTEGER NOT NULL DEFAULT 0")
             self._ensure_column(connection, "tencent_scan_runs", "updated_feeds", "INTEGER NOT NULL DEFAULT 0")
@@ -1153,8 +1178,9 @@ class TencentChannelMonitor:
                 INSERT INTO tencent_scan_runs
                 (started_at, finished_at, scanned_feeds, duplicates, weekly_missing_topic,
                  delete_mode, guilds_json, classification_json, ai_reviewed, ai_fallbacks,
-                 ai_model, new_feeds, updated_feeds, cached_feeds)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 ai_vision_reviewed, ai_vision_fallbacks, ai_model,
+                 new_feeds, updated_feeds, cached_feeds)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
                 (
                     report.started_at,
@@ -1167,6 +1193,8 @@ class TencentChannelMonitor:
                     json.dumps(report.classification_counts, ensure_ascii=False, sort_keys=True),
                     report.ai_reviewed,
                     report.ai_fallbacks,
+                    report.ai_vision_reviewed,
+                    report.ai_vision_fallbacks,
                     report.ai_model,
                     report.new_feeds,
                     report.updated_feeds,

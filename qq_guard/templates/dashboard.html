@@ -12,15 +12,17 @@
 {% block content %}
 {% set latest = summary.latest_scan or {} %}
 <section class="manual-scan-summary" aria-label="巡检状态">
-  <div class="manual-scan-copy"><i class="ri-cursor-line" aria-hidden="true"></i><span><strong>只在你点击后巡检</strong><small>后台不会自动巡回。点击“立即巡检”后，才会读取频道最新内容。</small></span></div>
+  <div class="manual-scan-copy"><i class="ri-cursor-line" aria-hidden="true"></i><span><strong>只在你点击后巡检</strong><small>点击后会读取频道内容，进行文字 AI 判断，并检查有图片帖子的图片。</small></span></div>
   <dl>
     <div><dt>上次读取</dt><dd data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</dd></div>
+    <div><dt>AI 文字判断</dt><dd data-scan-metric="ai_reviewed">{{ latest.get('ai_reviewed', 0) }}</dd></div>
+    <div><dt>AI 图片检查</dt><dd data-scan-metric="ai_vision_reviewed">{{ latest.get('ai_vision_reviewed', 0) }}</dd></div>
     <div><dt>新发现</dt><dd data-scan-metric="new_feeds">{{ latest.get('new_feeds', 0) }}</dd></div>
     <div><dt>等待处理</dt><dd>{{ summary.pending }}</dd></div>
   </dl>
   <a href="{{ url_for('contents') }}">查看全部内容</a>
 </section>
-<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><a href="{{ url_for('contents') }}" data-scan-results hidden>查看已同步内容</a></div>
+<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><div class="scan-ai-result" data-scan-ai-result hidden><span><i class="ri-brain-line" aria-hidden="true"></i>文字 AI <b data-scan-ai-text>0</b> 条</span><span><i class="ri-image-line" aria-hidden="true"></i>图片检查 <b data-scan-ai-image>0</b> 条</span><span class="scan-ai-fallback" data-scan-ai-fallback hidden><i class="ri-error-warning-line" aria-hidden="true"></i><b data-scan-ai-fallback-count>0</b> 条需人工补充</span></div><a href="{{ url_for('contents') }}" data-scan-results hidden>查看已同步内容</a></div>
 
 <section class="task-metrics" aria-label="处理任务">
   <a class="task-metric danger {{ 'selected' if selected_task == 'action' }}" href="{{ url_for('dashboard', task='action') }}"><i class="ri-error-warning-line" aria-hidden="true"></i><span><b>先处理这些</b><small>有风险或判断不明确，打开后决定保留还是删除</small></span><strong>{{ task_counts.action }}</strong></a>
@@ -80,6 +82,7 @@
         <button class="{{ 'primary-button' if item.ui_queue == 'placement' else 'ghost-button' }} compact" type="submit"><i class="ri-drag-move-2-line" aria-hidden="true"></i>移动</button>
       </form>{% endif %}
       <a class="review-action {{ 'primary-button recommended' if item.ui_queue in ['review', 'incomplete'] else 'secondary-button' }} compact" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}"><i class="ri-file-search-line" aria-hidden="true"></i>查看完整内容</a>
+      {% if item.share_url %}<a class="review-action secondary-button compact" href="{{ item.share_url }}" target="_blank" rel="noopener"><i class="ri-external-link-line" aria-hidden="true"></i>打开原帖</a>{% endif %}
       {% if item.source == 'tencent' %}<form class="review-action review-delete-form {{ 'recommended' if item.ui_queue == 'delete' }}" action="{{ url_for('execute_delete', row_id=item.id) }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ dashboard_return_url }}">
         <button class="{{ 'danger-button' if item.ui_queue == 'delete' else 'danger-outline' }} compact" type="submit" {{ 'disabled' if not manual_delete_enabled or item.delete_status == 'deleted' }}><i class="ri-delete-bin-line" aria-hidden="true"></i>{{ '已删除' if item.delete_status == 'deleted' else '删除' }}</button>

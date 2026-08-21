@@ -132,7 +132,8 @@ class AdminStore:
                        source_created_at, classification_json, media_urls_json,
                        'rules' AS analysis_source, 'not_requested' AS ai_status,
                        '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
-                       '' AS ai_error
+                       '' AS ai_error, '' AS content_detail_json,
+                       '' AS content_summary_json
                 FROM content_events
                 WHERE (? = '' OR review_status = ?)
                   AND (? = '' OR risk_level = ?)
@@ -144,24 +145,33 @@ class AdminStore:
             ).fetchall()
             tencent_rows = connection.execute(
                 """
-                SELECT id, feed_id AS item_id, guild_id, guild_name, channel_id,
-                       section, title, body, author_id, risk_level, risk_score,
-                       action, policy_version, reasons_json, review_status,
-                       delete_status, delete_error, created_at, source_created_at,
-                       classification_json, media_urls_json, analysis_source,
-                       ai_status, ai_model, ai_confidence, ai_analysis_json, ai_error
-                FROM tencent_moderation_findings
-                WHERE (? = '' OR review_status = ?)
-                  AND (? = '' OR risk_level = ?)
-                  AND (? = '' OR guild_id = ?)
-                  AND review_status <> 'superseded'
-                  AND id = (
+                SELECT finding.id, finding.feed_id AS item_id, finding.guild_id,
+                       finding.guild_name, finding.channel_id, finding.section,
+                       finding.title, finding.body, finding.author_id,
+                       finding.risk_level, finding.risk_score, finding.action,
+                       finding.policy_version, finding.reasons_json, finding.review_status,
+                       finding.delete_status, finding.delete_error, finding.created_at,
+                       finding.source_created_at, finding.classification_json,
+                       finding.media_urls_json, finding.analysis_source,
+                       finding.ai_status, finding.ai_model, finding.ai_confidence,
+                       finding.ai_analysis_json, finding.ai_error,
+                       cache.detail_json AS content_detail_json,
+                       cache.summary_json AS content_summary_json
+                FROM tencent_moderation_findings AS finding
+                LEFT JOIN tencent_feed_cache AS cache
+                  ON cache.guild_id = finding.guild_id
+                 AND cache.feed_id = finding.feed_id
+                WHERE (? = '' OR finding.review_status = ?)
+                  AND (? = '' OR finding.risk_level = ?)
+                  AND (? = '' OR finding.guild_id = ?)
+                  AND finding.review_status <> 'superseded'
+                  AND finding.id = (
                       SELECT MAX(current.id)
                       FROM tencent_moderation_findings AS current
-                      WHERE current.guild_id = tencent_moderation_findings.guild_id
-                        AND current.feed_id = tencent_moderation_findings.feed_id
+                      WHERE current.guild_id = finding.guild_id
+                        AND current.feed_id = finding.feed_id
                   )
-                ORDER BY risk_score DESC, id DESC
+                ORDER BY finding.risk_score DESC, finding.id DESC
                 LIMIT ?
                 """,
                 (status, status, risk_level, risk_level, guild_id, guild_id, limit),
@@ -381,7 +391,8 @@ class AdminStore:
                            source_created_at, classification_json, media_urls_json,
                            'rules' AS analysis_source, 'not_requested' AS ai_status,
                            '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
-                           '' AS ai_error
+                           '' AS ai_error, '' AS content_detail_json,
+                           '' AS content_summary_json
                     FROM content_events WHERE id = ?
                     """,
                     (int(row_id),),
@@ -389,13 +400,23 @@ class AdminStore:
             else:
                 row = connection.execute(
                     """
-                    SELECT id, feed_id AS item_id, guild_id, guild_name, channel_id,
-                           section, title, body, author_id, risk_level, risk_score,
-                           action, policy_version, reasons_json, review_status,
-                           delete_status, delete_error, created_at, source_created_at,
-                           classification_json, media_urls_json, analysis_source,
-                           ai_status, ai_model, ai_confidence, ai_analysis_json, ai_error
-                    FROM tencent_moderation_findings WHERE id = ?
+                    SELECT finding.id, finding.feed_id AS item_id, finding.guild_id,
+                           finding.guild_name, finding.channel_id, finding.section,
+                           finding.title, finding.body, finding.author_id,
+                           finding.risk_level, finding.risk_score, finding.action,
+                           finding.policy_version, finding.reasons_json, finding.review_status,
+                           finding.delete_status, finding.delete_error, finding.created_at,
+                           finding.source_created_at, finding.classification_json,
+                           finding.media_urls_json, finding.analysis_source,
+                           finding.ai_status, finding.ai_model, finding.ai_confidence,
+                           finding.ai_analysis_json, finding.ai_error,
+                           cache.detail_json AS content_detail_json,
+                           cache.summary_json AS content_summary_json
+                    FROM tencent_moderation_findings AS finding
+                    LEFT JOIN tencent_feed_cache AS cache
+                      ON cache.guild_id = finding.guild_id
+                     AND cache.feed_id = finding.feed_id
+                    WHERE finding.id = ?
                     """,
                     (int(row_id),),
                 ).fetchone()
@@ -861,6 +882,8 @@ class AdminStore:
                     classification_json TEXT NOT NULL DEFAULT '{}',
                     ai_reviewed INTEGER NOT NULL DEFAULT 0,
                     ai_fallbacks INTEGER NOT NULL DEFAULT 0,
+                    ai_vision_reviewed INTEGER NOT NULL DEFAULT 0,
+                    ai_vision_fallbacks INTEGER NOT NULL DEFAULT 0,
                     ai_model TEXT NOT NULL DEFAULT ''
                 );
 
@@ -982,6 +1005,8 @@ class AdminStore:
             for column, declaration in {
                 "ai_reviewed": "INTEGER NOT NULL DEFAULT 0",
                 "ai_fallbacks": "INTEGER NOT NULL DEFAULT 0",
+                "ai_vision_reviewed": "INTEGER NOT NULL DEFAULT 0",
+                "ai_vision_fallbacks": "INTEGER NOT NULL DEFAULT 0",
                 "ai_model": "TEXT NOT NULL DEFAULT ''",
                 "new_feeds": "INTEGER NOT NULL DEFAULT 0",
                 "updated_feeds": "INTEGER NOT NULL DEFAULT 0",
@@ -1025,6 +1050,20 @@ class AdminStore:
         item["classification"] = _json(item.pop("classification_json", "{}"), {})
         item["media_urls"] = _json(item.pop("media_urls_json", "[]"), [])
         item["ai_analysis"] = _json(item.pop("ai_analysis_json", "{}"), {})
+        detail = _json(item.pop("content_detail_json", "{}"), {})
+        summary = _json(item.pop("content_summary_json", "{}"), {})
+        content = dict(summary)
+        content.update({
+            key: value
+            for key, value in detail.items()
+            if value not in (None, "", [], {})
+        })
+        share_url = content.get("share_url") or content.get("shareUrl") or ""
+        item["share_url"] = (
+            str(share_url)
+            if str(share_url).startswith(("https://", "http://"))
+            else ""
+        )
         return item
 
     @staticmethod

@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.7.2（今日处理内容卡片、手动巡检与删除状态同步）
+- Python 包版本：0.7.3（工作台原帖直达、文字与图片 AI 巡检结果展示）
 
 ## 2. 当前生产快照
 
@@ -139,6 +139,13 @@ QQ 频道新内容
 - 保留、移动、查看完整内容和删除均可在同一张卡片直接操作，处理后返回当前任务。
 - 腾讯秒级或毫秒级时间戳统一显示为北京时间。
 
+### 0.7.3：原帖直达与 AI 巡检结果可见
+
+- 左侧导航将“全部内容”置于“今日处理”上方，内容总览和待办入口顺序与管理员工作流一致。
+- “今日处理”的审核卡片从已同步内容缓存中自动带出原帖地址，管理员可直接打开原帖核对，不需要查找帖子 ID。
+- 手动点击“立即巡检”后，进度区明确展示文字 AI 判断、图片检查和需要人工补充的数量。
+- 巡检报告新增图片检查完成与图片检查失败统计；旧数据库启动时自动补齐字段，保持现有生产数据库兼容。
+
 ### 0.6.0：腾讯官方 Skill 全能力入口
 
 - 官方 Skill 基线为 `tencent-channel-community 1.1.5`，后台“官方能力”页面从服务器 CLI 实时读取 Schema，因此腾讯后续新增命令可自动出现在能力目录。
@@ -234,7 +241,7 @@ cp config.example.json config.json
 .venv/bin/python -m unittest discover -s tests -v
 ~~~
 
-交接前最后一次结果：80 tests OK。
+交接前最后一次结果：85 tests OK。
 
 本地 config.json 已被 .gitignore 忽略。不要把生产凭据写入测试文件。本地网页只用于界面和单元测试，不要在本机再次执行 tencent-channel-cli login，原因见第 11 节。
 

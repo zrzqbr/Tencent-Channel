@@ -297,6 +297,16 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"built-in method clear", response.data)
         self.assertIn("查看判断依据".encode("utf-8"), response.data)
 
+    def test_dashboard_review_card_includes_original_post_link(self):
+        self.insert_cached_content(feed_id="feed-original")
+        self.insert_tencent_review(feed_id="feed-original")
+        response = self.login()
+        self.assertIn("打开原帖".encode("utf-8"), response.data)
+        self.assertIn(
+            b'href="https://pd.qq.com/s/test" target="_blank"',
+            response.data,
+        )
+
     def test_quality_scores_without_high_risk_evidence_do_not_suggest_delete(self):
         row_id = self.insert_tencent_review(title="哈哈哈哈哈")
         reasons = [
@@ -934,6 +944,7 @@ class WebTests(unittest.TestCase):
                     "duplicates": 1,
                     "ai_reviewed": 2,
                     "ai_fallbacks": 0,
+                    "ai_vision_reviewed": 1,
                 }
 
         class Monitor:
@@ -963,6 +974,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(state["status"], "completed")
         self.assertEqual(state["percent"], 100)
         self.assertEqual(state["summary"]["scanned_feeds"], 7)
+        self.assertEqual(state["summary"]["ai_vision_reviewed"], 1)
 
     def test_scan_rejects_overlapping_run(self):
         response = self.login()

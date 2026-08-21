@@ -16,6 +16,11 @@ if (scanForm) {
   const bar = progress.querySelector('[data-scan-bar]');
   const message = progress.querySelector('[data-scan-message]');
   const results = progress.querySelector('[data-scan-results]');
+  const aiResult = progress.querySelector('[data-scan-ai-result]');
+  const aiText = progress.querySelector('[data-scan-ai-text]');
+  const aiImage = progress.querySelector('[data-scan-ai-image]');
+  const aiFallback = progress.querySelector('[data-scan-ai-fallback]');
+  const aiFallbackCount = progress.querySelector('[data-scan-ai-fallback-count]');
   const latestScan = document.querySelector('[data-latest-scan]');
   let pollTimer = null;
 
@@ -34,13 +39,21 @@ if (scanForm) {
     if (state.status === 'completed') {
       results.hidden = false;
       if (state.results_url) results.href = state.results_url;
+      const summary = state.summary || {};
+      if (aiResult) {
+        aiResult.hidden = false;
+        if (aiText) aiText.textContent = String(summary.ai_reviewed || 0);
+        if (aiImage) aiImage.textContent = String(summary.ai_vision_reviewed || 0);
+        const fallbacks = Number(summary.ai_fallbacks || 0);
+        if (aiFallback) aiFallback.hidden = fallbacks === 0;
+        if (aiFallbackCount) aiFallbackCount.textContent = String(fallbacks);
+      }
       if (latestScan && state.finished_at) {
         latestScan.textContent = new Intl.DateTimeFormat('zh-CN', {
           timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
           hour: '2-digit', minute: '2-digit', hour12: false,
         }).format(new Date(state.finished_at)).replaceAll('/', '-');
       }
-      const summary = state.summary || {};
       document.querySelectorAll('[data-scan-metric]').forEach((item) => {
         const key = item.dataset.scanMetric;
         if (Object.prototype.hasOwnProperty.call(summary, key)) item.textContent = String(summary[key] || 0);

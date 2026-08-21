@@ -103,7 +103,11 @@ class ScanStatusStore:
                 "status": "completed",
                 "percent": 100,
                 "phase": "巡检完成",
-                "message": f"已检查 {int(summary.get('scanned_feeds') or 0)} 条内容",
+                "message": (
+                    f"已检查 {int(summary.get('scanned_feeds') or 0)} 条内容，"
+                    f"完成文字 AI {int(summary.get('ai_reviewed') or 0)} 条，"
+                    f"图片检查 {int(summary.get('ai_vision_reviewed') or 0)} 条"
+                ),
                 "finished_at": _utc_now(),
                 "summary": summary,
                 "error": "",
