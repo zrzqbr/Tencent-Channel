@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.8.0（WorkBuddy 官方知识库问答与人工发布闭环）
+- Python 包版本：0.8.1（手动巡检实时进度、超时和中断恢复）
 
 ## 2. 当前生产快照
 
@@ -133,6 +133,14 @@ QQ 频道新内容
 ~~~
 
 ## 6. 最近完成的关键修改
+
+### 0.8.1：手动巡检不再无期限转圈
+
+- 巡检按内容逐条更新“已完成 / 总数”，首次应用新规则并重建 AI 缓存时也能看到真实进度。
+- Hy3 和 Youtu-VITA 的失败重试收紧为一次，单条分析超时后转人工核对并继续下一条。
+- 整次巡检最多运行 45 分钟；达到上限会保留已完成的 AI 缓存并明确提示再次巡检剩余内容。
+- 服务重启或任务进程意外退出后，遗留的“进行中”状态会自动改为“已中断”，不会永久转圈。
+- 知识库检索结果先落库，再生成回复草稿；草稿生成较慢或中断时不再表现为零记录。
 
 ### 0.8.0：官方知识库问答接入
 
@@ -288,7 +296,7 @@ cp config.example.json config.json
 .venv/bin/python -m unittest discover -s tests -v
 ~~~
 
-交接前最后一次结果：122 tests OK；知识库服务 18 tests OK。
+交接前最后一次结果：126 tests OK；知识库服务 18 tests OK。
 
 本地 config.json 已被 .gitignore 忽略。不要把生产凭据写入测试文件。本地网页只用于界面和单元测试，不要在本机再次执行 tencent-channel-cli login，原因见第 11 节。
 

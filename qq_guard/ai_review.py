@@ -270,7 +270,7 @@ class AIReviewClient:
         }
         body = json.dumps(request_payload, ensure_ascii=False).encode("utf-8")
         parse_error: Optional[Exception] = None
-        for parse_attempt in range(3):
+        for parse_attempt in range(2):
             response = self._post_with_retry(
                 f"{self.base_url}/responses",
                 headers,
@@ -292,7 +292,7 @@ class AIReviewClient:
                 break
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
                 parse_error = exc
-                if parse_attempt < 2:
+                if parse_attempt < 1:
                     time.sleep(0.5 * (2**parse_attempt))
         else:
             raise AIReviewUnavailable(
@@ -607,16 +607,16 @@ class AIReviewClient:
         label: str,
     ) -> Mapping[str, Any]:
         last_error: Optional[Exception] = None
-        for attempt in range(3):
+        for attempt in range(2):
             try:
                 return self.transport(url, headers, body, timeout)
             except urllib.error.HTTPError as exc:
                 last_error = exc
-                if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt == 2:
+                if exc.code not in {408, 409, 429, 500, 502, 503, 504} or attempt == 1:
                     break
             except (OSError, TimeoutError, ValueError, KeyError, TypeError) as exc:
                 last_error = exc
-                if attempt == 2:
+                if attempt == 1:
                     break
             time.sleep(0.5 * (2**attempt))
         raise AIReviewUnavailable(

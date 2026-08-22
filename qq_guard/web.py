@@ -156,6 +156,29 @@ def create_app(
     scan_status_store = ScanStatusStore(guard_config.database_path)
     sync_status_store = ScanStatusStore(guard_config.database_path, "sync")
 
+    def task_state(
+        status_store: ScanStatusStore, job_id: str = ""
+    ) -> Optional[Dict[str, Any]]:
+        state = status_store.read(job_id)
+        if state is None or state.get("status") != "running":
+            return state
+        probe = ScanLock(guard_config.database_path)
+        if not probe.acquire():
+            return state
+        try:
+            latest = status_store.read(job_id)
+            if latest is None or latest.get("status") != "running":
+                return latest
+            task_name = "内容同步" if status_store.task_type == "sync" else "AI 巡检"
+            return status_store.fail(
+                str(latest.get("job_id") or job_id),
+                f"上次{task_name}已中断，请重新点击开始。",
+            )
+        finally:
+            probe.release()
+
+    task_state(scan_status_store)
+
     def remote_ip() -> str:
         return str(request.remote_addr or "")[:80]
 
@@ -1404,7 +1427,7 @@ def create_app(
     def scan_status(job_id: str):
         if not job_id or len(job_id) > 80:
             abort(404)
-        state = scan_status_store.read(job_id)
+        state = task_state(scan_status_store, job_id)
         if state is None:
             abort(404)
         state["results_url"] = url_for("contents")
@@ -1415,7 +1438,7 @@ def create_app(
     def sync_status(job_id: str):
         if not job_id or len(job_id) > 80:
             abort(404)
-        state = sync_status_store.read(job_id)
+        state = task_state(sync_status_store, job_id)
         if state is None:
             abort(404)
         state["results_url"] = url_for("contents")
@@ -1836,6 +1859,7 @@ def _public_operation_error(value: Any) -> str:
             "请选择当前频道内的目标栏目",
             "这条内容已经删除",
             "标题和正文不能同时为空",
+            "本次巡检已运行超过",
         )
     ):
         return original_message

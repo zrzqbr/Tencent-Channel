@@ -133,6 +133,46 @@ class KnowledgeBaseTests(unittest.TestCase):
                     ).fetchone()
                 self.assertEqual(row, (expected_status, 0, "", "not_allowed"))
 
+    def test_lookup_is_saved_before_draft_generation(self):
+        database = self.root / "guard-generating.sqlite3"
+        settings = self.settings
+
+        class Client:
+            def search(self, query):
+                return KnowledgeBaseClient(settings)._validate_lookup(
+                    KnowledgeBaseTests.result()
+                )
+
+            def generate_draft(self, query, lookup):
+                with sqlite3.connect(str(database)) as connection:
+                    row = connection.execute(
+                        "SELECT knowledge_status, can_answer, generation_status "
+                        "FROM knowledge_answer_drafts"
+                    ).fetchone()
+                self.assertEqual(row, ("ready", 1, "generating"))
+                return "可以购买加量包。\n\n官方来源：https://www.workbuddy.cn/docs/workbuddy/Pricing"
+
+        client = Client()
+        client.assertEqual = self.assertEqual
+        service = KnowledgeAnswerService(settings, database, client=client)
+        service.process_question(
+            guild_id="1",
+            guild_name="WorkBuddy",
+            channel_id="2",
+            feed_id="feed-generating",
+            feed_create_time="123",
+            title="积分",
+            body="积分怎么充值",
+            author_id="u1",
+        )
+
+        with sqlite3.connect(str(database)) as connection:
+            row = connection.execute(
+                "SELECT generation_status, draft FROM knowledge_answer_drafts"
+            ).fetchone()
+        self.assertEqual(row[0], "completed")
+        self.assertIn("官方来源", row[1])
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -396,6 +396,27 @@ class KnowledgeAnswerService:
         generation_status = "not_allowed"
         generation_error = ""
         if lookup.can_answer:
+            self._upsert(
+                guild_id=guild_id,
+                guild_name=guild_name,
+                channel_id=channel_id,
+                feed_id=feed_id,
+                feed_create_time=feed_create_time,
+                title=title,
+                body=body,
+                author_id=author_id,
+                question_hash=question_hash,
+                knowledge_status=lookup.answer_status,
+                can_answer=lookup.can_answer,
+                coverage=lookup.coverage,
+                draft="",
+                sources=lookup.sources,
+                matches=lookup.matches,
+                index_updated_at=lookup.index_updated_at,
+                generation_status="generating",
+                generation_error="",
+                now=now,
+            )
             try:
                 draft = self.client.generate_draft(question, lookup)
                 generation_status = "completed"

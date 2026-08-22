@@ -75,6 +75,7 @@ class ScanStatusStore:
                 else "正在读取后台已同步的内容"
             ),
             "started_at": _utc_now(),
+            "updated_at": _utc_now(),
             "finished_at": "",
             "summary": {},
             "error": "",
@@ -97,6 +98,7 @@ class ScanStatusStore:
                 "percent": max(3, min(int(percent), 98)),
                 "phase": str(phase)[:80],
                 "message": str(message)[:300],
+                "updated_at": _utc_now(),
             }
         )
         self._write(state)
@@ -126,6 +128,7 @@ class ScanStatusStore:
                 "phase": phase,
                 "message": message,
                 "finished_at": _utc_now(),
+                "updated_at": _utc_now(),
                 "summary": summary,
                 "error": "",
             }
@@ -141,6 +144,7 @@ class ScanStatusStore:
                 "phase": "同步失败" if self.task_type == "sync" else "巡检失败",
                 "message": str(error)[:300],
                 "finished_at": _utc_now(),
+                "updated_at": _utc_now(),
                 "error": str(error)[:500],
             }
         )

@@ -13,7 +13,7 @@ from werkzeug.security import generate_password_hash
 from qq_guard.admin_store import AdminStore
 from qq_guard.config import GuardConfig
 from qq_guard.placement import move_targets
-from qq_guard.scan_control import ScanLock
+from qq_guard.scan_control import ScanLock, ScanStatusStore
 from qq_guard.tencent_cli import TencentCliError
 from qq_guard.web import _cn_time, _plain_ai_text, create_app
 
@@ -1427,6 +1427,17 @@ class WebTests(unittest.TestCase):
             lock.release()
         self.assertEqual(response.status_code, 409)
         self.assertEqual(response.get_json()["status"], "busy")
+
+    def test_abandoned_scan_is_reported_as_interrupted(self):
+        self.login()
+        ScanStatusStore(self.database_path).start("abandoned-job")
+
+        response = self.client.get("/scan/status/abandoned-job")
+
+        self.assertEqual(response.status_code, 200)
+        state = response.get_json()
+        self.assertEqual(state["status"], "failed")
+        self.assertIn("已中断", state["message"])
 
 
 if __name__ == "__main__":

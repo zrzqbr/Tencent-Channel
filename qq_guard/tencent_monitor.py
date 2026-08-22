@@ -18,6 +18,13 @@ from .moderation import ModerationEngine
 from .scan_control import ScanLock
 
 
+MAX_REVIEW_SECONDS = 45 * 60
+
+
+class ReviewDeadlineExceeded(RuntimeError):
+    pass
+
+
 class TencentFeedApi(Protocol):
     def list_channel_feeds(self, guild_id: str, channel_id: str, count: int = 20) -> List[Dict[str, Any]]:
         ...
@@ -198,6 +205,7 @@ class TencentChannelMonitor:
         ai_client: Optional[AIReviewClient] = None,
         knowledge_service: Optional[KnowledgeAnswerService] = None,
         progress_callback: Optional[Callable[[int, str, str], None]] = None,
+        max_review_seconds: int = MAX_REVIEW_SECONDS,
     ) -> None:
         settings = config.tencent_channels or (
             (config.tencent_channel,) if config.tencent_channel is not None else ()
@@ -214,6 +222,7 @@ class TencentChannelMonitor:
         self.ai_client = ai_client
         self.knowledge_service = knowledge_service
         self.progress_callback = progress_callback
+        self.max_review_seconds = max(1, int(max_review_seconds))
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
         self._ai_vision_reviewed = 0
@@ -284,6 +293,7 @@ class TencentChannelMonitor:
         """Review already-synced content without reading from Tencent."""
         self._progress(5, "准备 AI 巡检", "正在读取后台已同步的内容")
         started_at = _utc_now()
+        started_monotonic = time.monotonic()
         total = 0
         weekly_missing = 0
         findings: List[DuplicateFinding] = []
@@ -299,11 +309,7 @@ class TencentChannelMonitor:
         self._cached_feeds = 0
         self._backfilled_feeds = 0
 
-        work_units = sum(
-            len(settings.channels) + len(settings.auto_classify_channels)
-            for settings in self.settings
-        )
-        completed_units = 0
+        review_jobs = []
         for settings in self.settings:
             guild_label = settings.name or settings.guild_id
             guild_names.append(guild_label)
@@ -319,26 +325,52 @@ class TencentChannelMonitor:
                 if channel_id and channel_id not in configured_channel_ids
             )
             for channel_name, channel_id in channel_jobs:
-                self._progress(
-                    min(88, 10 + int(78 * completed_units / max(work_units, 1))),
-                    "AI 分析内容",
-                    f"正在分析 {guild_label} · {channel_name} 的文字和图片",
-                )
                 feeds = feeds_by_channel.get(channel_id, [])
-                total += len(feeds)
-                channel_weekly, channel_duplicates, channel_findings = self._process_channel(
-                    settings,
-                    channel_id,
-                    feeds,
-                    guild_label,
-                    classification_counts,
-                    details=dict(details),
-                    detect_duplicates=False,
+                review_jobs.append(
+                    (settings, guild_label, channel_name, channel_id, feeds, dict(details))
                 )
-                weekly_missing += channel_weekly
-                findings.extend(channel_duplicates)
-                moderation_findings.extend(channel_findings)
-                completed_units += 1
+
+        total = sum(len(job[4]) for job in review_jobs)
+        completed_items = 0
+        for settings, guild_label, channel_name, channel_id, feeds, details in review_jobs:
+            def report_item_progress(item_index: int, _feed: Mapping[str, Any]) -> None:
+                position = completed_items + item_index + 1
+                finished_items = position - 1
+                elapsed = time.monotonic() - started_monotonic
+                if elapsed > self.max_review_seconds:
+                    minutes = max(1, self.max_review_seconds // 60)
+                    raise ReviewDeadlineExceeded(
+                        f"本次巡检已运行超过 {minutes} 分钟，系统已停止继续等待。"
+                        "已经完成的 AI 结果会保留，请稍后再次巡检剩余内容。"
+                    )
+                percent = min(90, 8 + int(82 * finished_items / max(total, 1)))
+                self._progress(
+                    percent,
+                    "AI 逐条分析",
+                    f"已完成 {finished_items}/{total} 条，正在分析第 {position} 条"
+                    f" · {guild_label} · {channel_name}",
+                )
+
+            channel_weekly, channel_duplicates, channel_findings = self._process_channel(
+                settings,
+                channel_id,
+                feeds,
+                guild_label,
+                classification_counts,
+                details=details,
+                detect_duplicates=False,
+                item_progress_callback=report_item_progress,
+            )
+            completed_items += len(feeds)
+            weekly_missing += channel_weekly
+            findings.extend(channel_duplicates)
+            moderation_findings.extend(channel_findings)
+
+        self._progress(
+            92,
+            "汇总巡检结果",
+            f"已完成 {completed_items}/{total} 条，正在整理处理建议",
+        )
 
         report = ScanReport(
             scanned_feeds=total,
@@ -743,13 +775,18 @@ class TencentChannelMonitor:
         *,
         details: Optional[Dict[str, Dict[str, Any]]] = None,
         detect_duplicates: bool = True,
+        item_progress_callback: Optional[
+            Callable[[int, Mapping[str, Any]], None]
+        ] = None,
     ) -> Tuple[int, List[DuplicateFinding], List[ModerationFinding]]:
         weekly_missing = 0
         moderation_findings: List[ModerationFinding] = []
         details = details or {}
         by_section: Dict[Section, List[Dict[str, Any]]] = {}
         nearby_items: List[IncomingContent] = []
-        for feed in feeds:
+        for item_index, feed in enumerate(feeds):
+            if item_progress_callback is not None:
+                item_progress_callback(item_index, feed)
             detail = self._detail(settings, channel_id, feed, details)
             classification = self._classify_feed(settings, channel_id, feed, detail)
             classification, feed_findings = self._analyze_finding(

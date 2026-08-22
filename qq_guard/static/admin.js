@@ -31,7 +31,12 @@ if (scanForm) {
     percent.textContent = `${value}%`;
     bar.style.width = `${value}%`;
     track.setAttribute('aria-valuenow', String(value));
-    message.textContent = state.message || '正在分析后台已同步的内容';
+    const serverMessage = state.message || '正在分析后台已同步的内容';
+    const updatedAt = Date.parse(state.updated_at || '');
+    const waitingForSeconds = Number.isNaN(updatedAt) ? 0 : Math.floor((Date.now() - updatedAt) / 1000);
+    message.textContent = state.status === 'running' && waitingForSeconds >= 60
+      ? `${serverMessage}；当前这条分析时间较长，超时后会自动继续下一条`
+      : serverMessage;
     progress.classList.toggle('scan-failed', state.status === 'failed');
     progress.classList.toggle('scan-completed', state.status === 'completed');
     button.disabled = state.status === 'running';

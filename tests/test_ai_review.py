@@ -167,7 +167,7 @@ class AIReviewTests(unittest.TestCase):
         self.assertGreaterEqual(decision.risk_score, 25)
         self.assertIn("vision_unavailable", [reason.code for reason in decision.reasons])
 
-    def test_invalid_hy3_json_is_retried_before_fallback(self):
+    def test_invalid_hy3_json_is_retried_once_before_fallback(self):
         hy3_calls = 0
 
         def transport(url, headers, body, timeout):
@@ -175,7 +175,7 @@ class AIReviewTests(unittest.TestCase):
             if url.endswith("/chat/completions"):
                 return {"choices": [{"message": {"content": "图片无风险内容"}}]}
             hy3_calls += 1
-            if hy3_calls < 3:
+            if hy3_calls < 2:
                 return {"output_text": '{"section":"practical_article"'}
             return review_response()
 
@@ -186,7 +186,7 @@ class AIReviewTests(unittest.TestCase):
             transport=transport,
         ).review(self.item, None, self.classification, self.assessment)
 
-        self.assertEqual(hy3_calls, 3)
+        self.assertEqual(hy3_calls, 2)
         self.assertEqual(decision.status, "completed")
         self.assertEqual(decision.section, Section.PRACTICAL_ARTICLE)
 

@@ -7,7 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from qq_guard.config import GuardConfig
-from qq_guard.tencent_monitor import TencentChannelMonitor
+from qq_guard.tencent_monitor import ReviewDeadlineExceeded, TencentChannelMonitor
 
 
 class FakeTencentApi:
@@ -405,6 +405,54 @@ class TencentMonitorTests(unittest.TestCase):
 
         self.assertEqual(report.scanned_feeds, 22)
         self.assertEqual(api.deletions, [])
+
+    def test_cached_review_reports_progress_for_each_item(self):
+        feeds = [
+            self.feed(f"B_progress_{index}", "u1", "实战", f"第 {index} 条", index)
+            for index in range(1, 4)
+        ]
+        for feed in feeds:
+            feed["channel_name"] = "实用文章"
+        api = FakeGuildTencentApi(
+            {"100": feeds},
+            {
+                feed["feed_id"]: self.detail("实战", feed["content_snippet"])
+                for feed in feeds
+            },
+        )
+        config = self.config()
+        TencentChannelMonitor(config, api).sync_once(full_sync=True)
+        progress = []
+        monitor = TencentChannelMonitor(
+            config,
+            api,
+            progress_callback=lambda percent, phase, message: progress.append(
+                (percent, phase, message)
+            ),
+        )
+
+        monitor.review_cached_once()
+
+        item_progress = [item for item in progress if item[1] == "AI 逐条分析"]
+        self.assertEqual(len(item_progress), 3)
+        self.assertIn("已完成 0/3 条，正在分析第 1 条", item_progress[0][2])
+        self.assertIn("已完成 2/3 条，正在分析第 3 条", item_progress[-1][2])
+        self.assertLess(item_progress[0][0], item_progress[-1][0])
+
+    def test_cached_review_stops_after_deadline(self):
+        feed = self.feed("B_deadline", "u1", "实战", "超时测试", 1)
+        feed["channel_name"] = "实用文章"
+        api = FakeGuildTencentApi(
+            {"100": [feed]},
+            {"B_deadline": self.detail("实战", "超时测试")},
+        )
+        config = self.config()
+        TencentChannelMonitor(config, api).sync_once(full_sync=True)
+        monitor = TencentChannelMonitor(config, api, max_review_seconds=1)
+
+        with patch("qq_guard.tencent_monitor.time.monotonic", side_effect=[0.0, 2.0]):
+            with self.assertRaises(ReviewDeadlineExceeded):
+                monitor.review_cached_once()
 
     def test_cached_review_includes_synced_unconfigured_channels(self):
         configured = self.feed("B_configured", "u1", "请问", "配置栏目内容", 20)
