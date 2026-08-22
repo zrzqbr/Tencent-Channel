@@ -141,7 +141,8 @@ QQ 频道新内容
 - 只有知识库明确返回 `ready + can_answer=true`，Hy3 才能严格依据官方 `passages` 生成草稿；`review/unavailable` 没有发布按钮。
 - 管理员可以修改草稿、打开原帖、查看官方依据，再点击一次“发布回复”；系统调用腾讯官方 `feed.do-comment`，不自动回复。
 - 发布时强制保留至少一条官方来源链接；成功、失败和错误原因都会进入 SQLite 与操作记录。
-- 知识库独立部署在 `/srv/tencent-channel/knowledge/current`，由 `workbuddy-kb-update.timer` 每天 09:00 更新；不与半小时频道同步或手动 AI 巡检混在一起。
+- 知识库 2.0.1 独立部署在 `/srv/tencent-channel/knowledge/current`，由 `workbuddy-kb-update.timer` 每天 09:00 更新；不与半小时频道同步或手动 AI 巡检混在一起。
+- 知识库忽略 macOS 传输产生的 `._*` 隐藏资源文件；生产已连续重建和更新验证为 140 份官方文档、106 篇公众号资料，共 246 份，不会重复计数。
 - 后台新增知识库 CLI、超时、无效结果、证据资格、巡检接入、页面权限、发布条件、官方参数和审计测试。
 
 ### 0.7.8：外链专项检查
@@ -287,7 +288,7 @@ cp config.example.json config.json
 .venv/bin/python -m unittest discover -s tests -v
 ~~~
 
-交接前最后一次结果：122 tests OK；知识库服务 17 tests OK。
+交接前最后一次结果：122 tests OK；知识库服务 18 tests OK。
 
 本地 config.json 已被 .gitignore 忽略。不要把生产凭据写入测试文件。本地网页只用于界面和单元测试，不要在本机再次执行 tencent-channel-cli login，原因见第 11 节。
 

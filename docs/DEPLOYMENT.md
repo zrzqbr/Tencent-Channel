@@ -13,7 +13,7 @@
 - Let's Encrypt HTTPS 证书已签发，有效期至 2026-11-17；Certbot 自动续期定时器和模拟续期均验证成功。
 - 密码登录管理后台已上线，由 Gunicorn 监听 `127.0.0.1:8787`，Nginx 负责 HTTPS 和反向代理。
 - 后台服务单元为 `qq-channel-admin.service`；`qq-channel-sync.timer` 每 30 分钟只同步频道内容；`qq-channel-monitor.service` 保持禁用，AI 巡检由管理员在网页点击“立即巡检”后执行。
-- WorkBuddy 官方知识库位于 `/srv/tencent-channel/knowledge/current`；`workbuddy-kb-update.timer` 每天 09:00 更新公开官方文档和检索索引，不执行频道同步、AI 巡检或自动回复。
+- WorkBuddy 官方知识库 2.0.1 位于 `/srv/tencent-channel/knowledge/current`；`workbuddy-kb-update.timer` 每天 09:00 更新公开官方文档和检索索引，不执行频道同步、AI 巡检或自动回复。当前生产索引为 140 份官方文档、106 篇公众号资料，共 246 份。
 - 可使用 `https://tencent.ruitcarch.cloud/healthz` 检查应用状态，正常返回 JSON `{"status":"ok"}`。
 - 普通审核内容只进入管理员审批，不自动删除；严格连续重复去重可独立开启。
 - AI 使用广州站 TokenHub：Hy3 负责语义终审建议，Youtu-VITA 负责图片理解。
