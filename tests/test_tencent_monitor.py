@@ -338,6 +338,40 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertIn("image.jpg", cached[0])
         self.assertEqual(findings, 0)
 
+    def test_incremental_sync_gradually_backfills_old_summary_only_rows(self):
+        api = FakeGuildTencentApi(
+            {"100": []},
+            {"B_old": self.detail("历史帖子", "补齐后的完整正文")},
+        )
+        monitor = TencentChannelMonitor(self.config(ai_enabled=True), api)
+        database_path = Path(self.temp_dir.name) / "audit.sqlite3"
+        summary = self.feed("B_old", "u1", "历史帖子", "正文摘要", 10)
+        with sqlite3.connect(database_path) as connection:
+            connection.execute(
+                """
+                INSERT INTO tencent_feed_cache
+                (guild_id, channel_id, feed_id, version_key, detail_json, fetched_at,
+                 guild_name, channel_name, summary_json, first_seen_at, last_seen_at)
+                VALUES ('100', '200', 'B_old', '', '{}', '', '测试频道',
+                        '问答与交流', ?, '', '')
+                """,
+                (json.dumps(summary, ensure_ascii=False),),
+            )
+
+        report = monitor.sync_once()
+
+        self.assertEqual(report.backfilled_feeds, 1)
+        self.assertEqual(report.updated_feeds, 1)
+        with sqlite3.connect(database_path) as connection:
+            detail_json = connection.execute(
+                "SELECT detail_json FROM tencent_feed_cache WHERE feed_id = 'B_old'"
+            ).fetchone()[0]
+            findings = connection.execute(
+                "SELECT COUNT(*) FROM tencent_moderation_findings"
+            ).fetchone()[0]
+        self.assertIn("补齐后的完整正文", detail_json)
+        self.assertEqual(findings, 0)
+
     def test_cached_review_does_not_read_tencent_channel(self):
         feeds = [
             self.feed(f"B_cached_{index}", "u1", "请问", f"第 {index} 条待分析内容", index)

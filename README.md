@@ -123,7 +123,7 @@ qq-guard --config config.json tencent-sync
 QQ_GUARD_AUTO_SCAN_ENABLED=true qq-guard --config config.json tencent-monitor
 ```
 
-生产后台将内容同步与 AI 巡检分开：内容每 30 分钟自动同步，也可以在“全部内容”手动同步；AI 只在管理员点击“立即巡检”后分析已经同步的文字和图片。
+生产后台将内容同步与 AI 巡检分开：内容每 30 分钟自动同步，也可以在“全部内容”手动同步；每轮同步会限量补齐历史正文，遇到官方频率限制则留到下轮继续。AI 只在管理员点击“立即巡检”后分析已经同步的文字和图片。
 
 官方 CLI 模式不需要把 Token 写入本项目；登录凭据由 `tencent-channel-cli login` 单独保存在本机。测试模式只输出 `detected_only`，不会调用删帖接口。只有同时设置 `delete_mode=live` 和 `auto_delete_duplicates=true`，才会对命中的后一条重复帖子调用官方删帖接口。
 

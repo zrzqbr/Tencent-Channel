@@ -109,6 +109,7 @@ class ScanStatusStore:
             message = (
                 f"已同步 {int(summary.get('synced_feeds') or 0)} 条内容，"
                 f"新增 {int(summary.get('new_feeds') or 0)} 条，"
+                f"补齐历史正文 {int(summary.get('backfilled_feeds') or 0)} 条，"
                 "本次未执行 AI 分析"
             )
         else:

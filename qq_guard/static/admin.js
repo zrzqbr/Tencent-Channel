@@ -125,6 +125,7 @@ if (syncForm) {
   const result = progress.querySelector('[data-sync-result]');
   const syncedCount = progress.querySelector('[data-sync-count]');
   const newCount = progress.querySelector('[data-sync-new]');
+  const backfilledCount = progress.querySelector('[data-sync-backfilled]');
   const results = progress.querySelector('[data-sync-results]');
   const latestSync = document.querySelector('[data-latest-sync]');
   let pollTimer = null;
@@ -146,6 +147,7 @@ if (syncForm) {
       result.hidden = false;
       syncedCount.textContent = String(summary.synced_feeds || 0);
       newCount.textContent = String(summary.new_feeds || 0);
+      backfilledCount.textContent = String(summary.backfilled_feeds || 0);
       results.hidden = false;
       if (state.results_url) results.href = state.results_url;
       if (latestSync && state.finished_at) {

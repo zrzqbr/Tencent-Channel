@@ -174,6 +174,7 @@ class SyncReport:
     new_feeds: int = 0
     updated_feeds: int = 0
     cached_feeds: int = 0
+    backfilled_feeds: int = 0
 
     def public_summary(self) -> Dict[str, Any]:
         return {
@@ -184,6 +185,7 @@ class SyncReport:
             "new_feeds": self.new_feeds,
             "updated_feeds": self.updated_feeds,
             "cached_feeds": self.cached_feeds,
+            "backfilled_feeds": self.backfilled_feeds,
         }
 
 
@@ -216,6 +218,7 @@ class TencentChannelMonitor:
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
+        self._backfilled_feeds = 0
         self._initialize_audit()
 
     def sync_once(self, *, full_sync: bool = False) -> SyncReport:
@@ -227,6 +230,7 @@ class TencentChannelMonitor:
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
+        self._backfilled_feeds = 0
 
         for settings_index, settings in enumerate(self.settings):
             guild_label = settings.name or settings.guild_id
@@ -248,6 +252,7 @@ class TencentChannelMonitor:
                     details: Dict[str, Dict[str, Any]] = {}
                     for feed in feeds:
                         self._detail(settings, channel_id, feed, details)
+                self._backfill_missing_details(settings)
                 continue
 
             synced_feeds += len(guild_feeds)
@@ -257,6 +262,7 @@ class TencentChannelMonitor:
                 self._store_summary(settings, channel_id, feed)
                 if channel_id:
                     self._detail(settings, channel_id, feed, details)
+            self._backfill_missing_details(settings)
 
         report = SyncReport(
             synced_feeds=synced_feeds,
@@ -266,6 +272,7 @@ class TencentChannelMonitor:
             new_feeds=self._new_feeds,
             updated_feeds=self._updated_feeds,
             cached_feeds=self._cached_feeds,
+            backfilled_feeds=self._backfilled_feeds,
         )
         self._progress(96, "同步完成", "频道内容已更新，未执行 AI 分析")
         return report
@@ -287,6 +294,7 @@ class TencentChannelMonitor:
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
+        self._backfilled_feeds = 0
 
         work_units = sum(
             len(settings.channels) + len(settings.auto_classify_channels)
@@ -365,6 +373,7 @@ class TencentChannelMonitor:
         self._new_feeds = 0
         self._updated_feeds = 0
         self._cached_feeds = 0
+        self._backfilled_feeds = 0
 
         work_units = sum(
             len(settings.channels) + len(settings.auto_classify_channels)
@@ -609,6 +618,62 @@ class TencentChannelMonitor:
                 reverse=True,
             )
         return feeds_by_channel, details, channel_names
+
+    def _backfill_missing_details(
+        self,
+        settings: TencentChannelSettings,
+        limit: int = 5,
+    ) -> None:
+        """Gradually enrich old summary-only rows without exhausting API quota."""
+        with sqlite3.connect(str(self.database_path)) as connection:
+            rows = connection.execute(
+                """
+                SELECT channel_id, feed_id, summary_json
+                FROM tencent_feed_cache
+                WHERE guild_id = ?
+                  AND channel_id <> ''
+                  AND deleted_at IS NULL
+                  AND detail_json IN ('', '{}', 'null')
+                ORDER BY COALESCE(
+                    CAST(json_extract(summary_json, '$.create_time_raw') AS INTEGER),
+                    0
+                ) DESC
+                LIMIT ?
+                """,
+                (settings.guild_id, max(1, min(int(limit), 20))),
+            ).fetchall()
+        if not rows:
+            return
+        self._progress(
+            90,
+            "补齐历史正文",
+            f"正在补齐 {settings.name or settings.guild_id} 的历史正文和图片",
+        )
+        for channel_id, feed_id, summary_json in rows:
+            try:
+                summary = dict(json.loads(summary_json))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                summary = {}
+            summary["feed_id"] = str(summary.get("feed_id") or feed_id)
+            try:
+                detail = self.api.get_feed_detail(
+                    settings.guild_id,
+                    str(channel_id),
+                    str(feed_id),
+                )
+            except Exception as exc:
+                if _is_rate_limit_error(exc):
+                    return
+                continue
+            self._store_detail(
+                settings.guild_id,
+                str(channel_id),
+                str(feed_id),
+                self._feed_version(summary),
+                detail,
+            )
+            self._backfilled_feeds += 1
+            self._updated_feeds += 1
 
     def _resolve_channel_id(
         self,
