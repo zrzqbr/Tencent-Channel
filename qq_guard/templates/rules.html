@@ -4,6 +4,72 @@
 {% block page_intro %}<p class="page-subtitle">管理审核范围、栏目识别和敏感内容规则</p>{% endblock %}
 {% block topbar_extra %}<a class="secondary-button" href="{{ url_for('channels') }}"><i class="ri-community-line" aria-hidden="true"></i>频道与栏目</a><a class="secondary-button" href="{{ url_for('test_content') }}"><i class="ri-file-search-line" aria-hidden="true"></i>检查一条内容</a>{% endblock %}
 {% block content %}
+<section class="panel policy-section" id="section-topic-rules">
+  <div class="panel-title"><div><h2>栏目指定话题</h2><p>活动话题发错栏目时提示移动，目标栏目缺少指定话题时提示补充。</p></div><span class="policy-count">{{ section_topic_policies|length }} 条规则</span></div>
+  <div class="policy-editor-list">
+    {% for section_value, policy in section_topic_policies.items() %}
+    <div class="policy-editor-row">
+      <form action="{{ url_for('upsert_section_topic_policy') }}" method="post" class="policy-editor-form topic-policy-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="original_section" value="{{ section_value }}">
+        <label>适用栏目<select name="section" required>{% for section in sections %}<option value="{{ section.value }}" {{ 'selected' if section.value == section_value }}>{{ section.display_name }}</option>{% endfor %}</select></label>
+        <label class="policy-wide">当前指定话题<input name="required_hashtags" required maxlength="500" value="#{{ policy.get('required_hashtags',[])|map('string')|join('，#') }}" placeholder="#WorkBuddy的哇塞瞬间"></label>
+        <label class="check policy-toggle"><input type="checkbox" name="enabled" {{ 'checked' if policy.get('enabled',True) }}>启用</label>
+        <button class="primary-button compact" type="submit"><i class="ri-save-line" aria-hidden="true"></i>保存</button>
+      </form>
+      <form action="{{ url_for('delete_section_topic_policy', section_value=section_value) }}" method="post" class="policy-delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link-danger" type="submit"><i class="ri-delete-bin-line" aria-hidden="true"></i>删除</button></form>
+    </div>
+    {% else %}
+    <div class="policy-empty"><i class="ri-hashtag" aria-hidden="true"></i><span><strong>还没有设置指定话题</strong><small>新增后，巡检会按当前活动话题判断栏目。</small></span></div>
+    {% endfor %}
+  </div>
+  <details class="policy-add" {{ 'open' if not section_topic_policies }}>
+    <summary><i class="ri-add-line" aria-hidden="true"></i>添加指定话题规则</summary>
+    <form action="{{ url_for('upsert_section_topic_policy') }}" method="post" class="policy-editor-form topic-policy-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>适用栏目<select name="section" required>{% for section in sections %}<option value="{{ section.value }}">{{ section.display_name }}</option>{% endfor %}</select></label>
+      <label class="policy-wide">指定话题<input name="required_hashtags" required maxlength="500" placeholder="#WorkBuddy的哇塞瞬间"></label>
+      <label class="check policy-toggle"><input type="checkbox" name="enabled" checked>启用</label>
+      <button class="primary-button compact" type="submit"><i class="ri-add-line" aria-hidden="true"></i>添加</button>
+    </form>
+  </details>
+</section>
+
+<section class="panel policy-section" id="content-policy-rules">
+  <div class="panel-title"><div><h2>重点内容策略</h2><p>设置遇到某类内容时，AI 应重点检查什么，以及管理员下一步怎么处理。</p></div><span class="policy-count">{{ content_policies|length }} 条策略</span></div>
+  <div class="policy-editor-list">
+    {% for policy in content_policies %}
+    <div class="policy-editor-row content-policy-row">
+      <form action="{{ url_for('upsert_content_policy') }}" method="post" class="policy-editor-form content-policy-form">
+        <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+        <input type="hidden" name="index" value="{{ loop.index0 }}">
+        <label>策略名称<input name="name" required maxlength="80" value="{{ policy.get('name','') }}"></label>
+        <label class="policy-wide">出现这些内容时触发<input name="keywords" required maxlength="1000" value="{{ policy.get('keywords',[])|join('，') }}" placeholder="小红书，XHS，rednote"></label>
+        <label class="policy-guidance">检查要求<textarea name="guidance" rows="2" required maxlength="500">{{ policy.get('guidance','') }}</textarea></label>
+        <label>管理员下一步<select name="action"><option value="notice" {{ 'selected' if policy.get('action') == 'notice' }}>留意即可</option><option value="review" {{ 'selected' if policy.get('action','review') == 'review' }}>需要人工核对</option><option value="delete_candidate" {{ 'selected' if policy.get('action') == 'delete_candidate' }}>建议删除</option></select></label>
+        <label class="check policy-toggle"><input type="checkbox" name="enabled" {{ 'checked' if policy.get('enabled',True) }}>启用</label>
+        <button class="primary-button compact" type="submit"><i class="ri-save-line" aria-hidden="true"></i>保存</button>
+      </form>
+      <form action="{{ url_for('delete_content_policy', index=loop.index0) }}" method="post" class="policy-delete-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="link-danger" type="submit"><i class="ri-delete-bin-line" aria-hidden="true"></i>删除</button></form>
+    </div>
+    {% else %}
+    <div class="policy-empty"><i class="ri-focus-3-line" aria-hidden="true"></i><span><strong>还没有重点内容策略</strong><small>新增后，文字和图片巡检都会参考这些要求。</small></span></div>
+    {% endfor %}
+  </div>
+  <details class="policy-add" {{ 'open' if not content_policies }}>
+    <summary><i class="ri-add-line" aria-hidden="true"></i>添加重点内容策略</summary>
+    <form action="{{ url_for('upsert_content_policy') }}" method="post" class="policy-editor-form content-policy-form">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <label>策略名称<input name="name" required maxlength="80" placeholder="例如：小红书相关内容"></label>
+      <label class="policy-wide">出现这些内容时触发<input name="keywords" required maxlength="1000" placeholder="小红书，XHS，rednote"></label>
+      <label class="policy-guidance">检查要求<textarea name="guidance" rows="2" required maxlength="500" placeholder="例如：避免直接作答，提醒管理员核对是否适合在频道中讨论"></textarea></label>
+      <label>管理员下一步<select name="action"><option value="notice">留意即可</option><option value="review" selected>需要人工核对</option><option value="delete_candidate">建议删除</option></select></label>
+      <label class="check policy-toggle"><input type="checkbox" name="enabled" checked>启用</label>
+      <button class="primary-button compact" type="submit"><i class="ri-add-line" aria-hidden="true"></i>添加</button>
+    </form>
+  </details>
+</section>
+
 <section class="panel">
   <div class="panel-title"><div><h2>智能辅助判断</h2><p>帮助管理员理解文字和图片，只提供建议，不会自动删除或修改内容。</p></div><span class="mode-badge {{ 'warning' if ai_status.status == 'missing_key' else 'disabled' if ai_status.status == 'disabled' }}"><i></i>{{ ai_public_status_labels.get(ai_status.status, ai_status.status) }}</span></div>
   <form action="{{ url_for('update_ai_review') }}" method="post" class="stack-form">
@@ -33,7 +99,7 @@
       <label>“问答与交流”常见说法<textarea name="question_keywords" rows="3">{{ rules.get('question_keywords',[])|join('，') }}</textarea></label>
       <label>“实用文章”常见说法<textarea name="practical_keywords" rows="3">{{ rules.get('practical_keywords',[])|join('，') }}</textarea></label>
       <div class="form-grid"><label>实用文章最低字数<input type="number" name="min_practical_text_length" value="{{ rules.get('min_practical_text_length',100) }}"></label><label>精华内容参考字数<input type="number" name="min_featured_text_length" value="{{ rules.get('min_featured_text_length',220) }}"></label></div>
-      <label class="check"><input type="checkbox" name="weekly_requires_any_hashtag" {{ 'checked' if rules.get('weekly_requires_any_hashtag',True) }}>“每周一问”需要带话题标签</label>
+      <input type="hidden" name="weekly_requires_any_hashtag" value="on">
       <button class="primary-button" type="submit">保存栏目识别规则</button>
     </form>
   </section>

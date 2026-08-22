@@ -3,14 +3,21 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from qq_guard.ai_review import AIReviewClient
-from qq_guard.config import AIReviewSettings
+from qq_guard.ai_review import AIReviewClient, fuse_ai_review
+from qq_guard.config import (
+    AIReviewSettings,
+    ContentPolicy,
+    GuardConfig,
+    SectionTopicPolicy,
+)
 from qq_guard.models import (
+    AIReviewDecision,
     ClassificationResult,
     IncomingContent,
     ItemKind,
     ModerationAction,
     ModerationAssessment,
+    PolicyReason,
     RiskLevel,
     Section,
 )
@@ -93,14 +100,40 @@ class AIReviewTests(unittest.TestCase):
             self.assertEqual(payload["model"], "hy3")
             evidence = json.loads(payload["input"][0]["content"][0]["text"])
             self.assertIn("迁移步骤截图", evidence["vision"]["analysis"])
+            self.assertEqual(
+                evidence["required_section_topics"][0]["required_hashtags"],
+                ["#WorkBuddy的哇塞瞬间"],
+            )
+            self.assertEqual(
+                evidence["administrator_policies"][0]["name"],
+                "小红书相关内容",
+            )
             self.assertEqual(payload["text"]["format"]["type"], "json_schema")
             return review_response()
 
+        policy_config = GuardConfig(
+            database_path=self.database_path,
+            section_topic_policies={
+                Section.WEEKLY_QUESTION: SectionTopicPolicy(
+                    section=Section.WEEKLY_QUESTION,
+                    required_hashtags=("WorkBuddy的哇塞瞬间",),
+                )
+            },
+            content_policies=(
+                ContentPolicy(
+                    name="小红书相关内容",
+                    keywords=("小红书", "XHS", "rednote"),
+                    guidance="避免直接作答，提醒管理员人工核对",
+                    action="review",
+                ),
+            ),
+        )
         client = AIReviewClient(
             self.settings,
             self.database_path,
             api_key="test-key",
             transport=transport,
+            policy_config=policy_config,
         )
         first = client.review(
             self.item, None, self.classification, self.assessment
@@ -180,6 +213,76 @@ class AIReviewTests(unittest.TestCase):
         self.assertEqual(decision.risk_level, RiskLevel.LOW)
         self.assertEqual(decision.risk_score, 1)
         self.assertIn("ai_score_normalized", [reason.code for reason in decision.reasons])
+
+    def test_admin_review_policy_cannot_be_overridden_by_ai_allow(self):
+        policy_reason = self.assessment.reasons + (
+            PolicyReason(
+                code="content_policy_review",
+                category="content_policy",
+                severity="medium",
+                message="涉及小红书，请人工核对",
+                evidence="触发内容：小红书",
+                score=25,
+            ),
+        )
+        rule_assessment = ModerationAssessment(
+            action=ModerationAction.REVIEW,
+            risk_level=RiskLevel.MEDIUM,
+            risk_score=25,
+            policy_version="test.ai1",
+            reasons=policy_reason,
+        )
+        ai = AIReviewDecision(
+            section=Section.QA_DISCUSSION,
+            classification_confidence=0.95,
+            risk_level=RiskLevel.LOW,
+            risk_score=0,
+            recommended_action=ModerationAction.ALLOW,
+            summary="普通问答",
+        )
+
+        _, assessment = fuse_ai_review(
+            self.classification,
+            rule_assessment,
+            ai,
+            self.settings,
+        )
+
+        self.assertEqual(assessment.action, ModerationAction.REVIEW)
+        self.assertIn("content_policy_review", [reason.code for reason in assessment.reasons])
+
+    def test_current_topic_keeps_section_when_ai_guesses_another_section(self):
+        classification = ClassificationResult(
+            section=Section.WEEKLY_QUESTION,
+            confidence=1.0,
+            reasons=("命中当前指定话题",),
+            hashtags=("workbuddy的哇塞瞬间",),
+        )
+        ai = AIReviewDecision(
+            section=Section.PRACTICAL_ARTICLE,
+            classification_confidence=0.9,
+            risk_level=RiskLevel.LOW,
+            risk_score=0,
+            recommended_action=ModerationAction.ALLOW,
+            summary="看起来像实用文章",
+        )
+        topic_policies = {
+            Section.WEEKLY_QUESTION: SectionTopicPolicy(
+                section=Section.WEEKLY_QUESTION,
+                required_hashtags=("WorkBuddy的哇塞瞬间",),
+            )
+        }
+
+        merged, _ = fuse_ai_review(
+            classification,
+            self.assessment,
+            ai,
+            self.settings,
+            topic_policies,
+        )
+
+        self.assertEqual(merged.section, Section.WEEKLY_QUESTION)
+        self.assertEqual(merged.reasons, classification.reasons)
 
 
 if __name__ == "__main__":

@@ -37,6 +37,15 @@ class ModerationTests(unittest.TestCase):
                             "allow_external_links": False,
                         },
                     },
+                    "content_policies": [
+                        {
+                            "name": "小红书相关内容",
+                            "keywords": ["小红书", "XHS", "rednote"],
+                            "guidance": "避免直接作答，提醒管理员核对是否适合在频道中讨论",
+                            "action": "review",
+                            "enabled": True,
+                        }
+                    ],
                 },
                 ensure_ascii=False,
             ),
@@ -105,6 +114,16 @@ class ModerationTests(unittest.TestCase):
         classification, assessment = self.assess(item)
         self.assertEqual(classification.section, Section.PRACTICAL_ARTICLE)
         self.assertNotIn("section_mismatch", [r.code for r in assessment.reasons])
+
+    def test_admin_content_policy_explains_why_human_review_is_needed(self):
+        _, assessment = self.assess(self.item("请问这个问题能不能同步到小红书？"))
+        policy_reason = next(
+            reason for reason in assessment.reasons
+            if reason.code == "content_policy_review"
+        )
+        self.assertEqual(assessment.action, ModerationAction.REVIEW)
+        self.assertIn("避免直接作答", policy_reason.message)
+        self.assertIn("小红书", policy_reason.evidence)
 
 
 if __name__ == "__main__":

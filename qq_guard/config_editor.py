@@ -162,6 +162,98 @@ class ConfigEditor:
 
         return self._mutate(mutate, bump_policy=True)
 
+    def upsert_section_topic_policy(self, values: Dict[str, Any]) -> str:
+        section_value = str(values.get("section", "")).strip()
+        try:
+            section = Section(section_value)
+        except ValueError as exc:
+            raise ValueError("请选择有效的适用栏目") from exc
+        if section is Section.UNCLASSIFIED:
+            raise ValueError("待管理员确认不能设置指定话题")
+        hashtags = self._parse_list(values.get("required_hashtags", ""), 20, 80, strip_hash=True)
+        if not hashtags:
+            raise ValueError("请至少填写一个指定话题")
+        enabled = bool(values.get("enabled"))
+        original_section = str(values.get("original_section", "")).strip()
+
+        def mutate(raw: Dict[str, Any]) -> None:
+            policies = raw.setdefault("section_topic_policies", {})
+            if original_section and original_section != section.value:
+                policies.pop(original_section, None)
+            policies[section.value] = {
+                "enabled": enabled,
+                "required_hashtags": hashtags,
+            }
+
+        return self._mutate(mutate, bump_policy=True)
+
+    def delete_section_topic_policy(self, section_value: str) -> str:
+        try:
+            section = Section(str(section_value))
+        except ValueError as exc:
+            raise ValueError("指定话题规则不存在") from exc
+
+        def mutate(raw: Dict[str, Any]) -> None:
+            policies = raw.setdefault("section_topic_policies", {})
+            if section.value not in policies:
+                raise ValueError("指定话题规则不存在")
+            policies.pop(section.value)
+
+        return self._mutate(mutate, bump_policy=True)
+
+    def upsert_content_policy(self, values: Dict[str, Any]) -> str:
+        name = str(values.get("name", "")).strip()
+        guidance = str(values.get("guidance", "")).strip()
+        keywords = self._parse_list(values.get("keywords", ""), 30, 80)
+        action = str(values.get("action", "review")).strip()
+        if not name or len(name) > 80:
+            raise ValueError("策略名称长度必须为 1–80 个字符")
+        if not keywords:
+            raise ValueError("请至少填写一个触发词")
+        if not guidance or len(guidance) > 500:
+            raise ValueError("检查要求长度必须为 1–500 个字符")
+        if action not in {"notice", "review", "delete_candidate"}:
+            raise ValueError("发现后的处理方式无效")
+        index_value = str(values.get("index", "")).strip()
+        index = int(index_value) if index_value else None
+        policy = {
+            "name": name,
+            "keywords": keywords,
+            "guidance": guidance,
+            "action": action,
+            "enabled": bool(values.get("enabled")),
+        }
+
+        def mutate(raw: Dict[str, Any]) -> None:
+            policies = raw.setdefault("content_policies", [])
+            if not isinstance(policies, list):
+                raise ValueError("主题策略配置无效")
+            if index is None:
+                if any(str(item.get("name", "")).casefold() == name.casefold() for item in policies):
+                    raise ValueError("同名主题策略已经存在")
+                policies.append(policy)
+                return
+            if index < 0 or index >= len(policies):
+                raise ValueError("主题策略不存在")
+            if any(
+                position != index
+                and str(item.get("name", "")).casefold() == name.casefold()
+                for position, item in enumerate(policies)
+            ):
+                raise ValueError("同名主题策略已经存在")
+            policies[index] = policy
+
+        return self._mutate(mutate, bump_policy=True)
+
+    def delete_content_policy(self, index: int) -> str:
+        def mutate(raw: Dict[str, Any]) -> None:
+            policies = raw.setdefault("content_policies", [])
+            if not isinstance(policies, list) or index < 0 or index >= len(policies):
+                raise ValueError("主题策略不存在")
+            policies.pop(index)
+
+        return self._mutate(mutate, bump_policy=True)
+
     def upsert_board(self, values: Dict[str, Any]) -> str:
         channel_id = str(values.get("channel_id", "")).strip()
         if not channel_id.isdigit():
@@ -246,6 +338,27 @@ class ConfigEditor:
         finally:
             if os.path.exists(temporary):
                 os.unlink(temporary)
+
+    @staticmethod
+    def _parse_list(
+        raw_value: Any,
+        max_items: int,
+        max_length: int,
+        *,
+        strip_hash: bool = False,
+    ) -> List[str]:
+        result: List[str] = []
+        seen = set()
+        normalized_value = str(raw_value).replace("，", ",").replace("\n", ",")
+        for item in normalized_value.split(","):
+            value = item.strip()
+            if strip_hash:
+                value = value.lstrip("#").strip()
+            key = value.casefold()
+            if value and key not in seen:
+                result.append(value[:max_length])
+                seen.add(key)
+        return result[:max_items]
 
     @staticmethod
     def _next_version(current: str) -> str:

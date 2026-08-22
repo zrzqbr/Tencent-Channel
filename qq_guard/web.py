@@ -892,6 +892,9 @@ def create_app(
             moderation=raw.get("moderation", {}),
             terms=raw.get("moderation", {}).get("terms", []),
             rules=raw.get("rules", {}),
+            section_topic_policies=raw.get("section_topic_policies", {}),
+            content_policies=raw.get("content_policies", []),
+            sections=[section for section in Section if section is not Section.UNCLASSIFIED],
             ai_review=raw.get("ai_review", {}),
             ai_status=AIReviewClient(current.ai_review, current.database_path).public_status(),
         )
@@ -951,6 +954,84 @@ def create_app(
         except (ValueError, OSError) as exc:
             flash(str(exc), "error")
         return redirect(url_for("rules"))
+
+    @app.post("/rules/section-topics")
+    @login_required
+    def upsert_section_topic_policy():
+        values: Dict[str, Any] = dict(request.form)
+        values.pop("csrf_token", None)
+        values["enabled"] = "enabled" in request.form
+        try:
+            version = editor.upsert_section_topic_policy(values)
+            store.record_audit(
+                "admin",
+                "policy.update",
+                "section_topic",
+                version,
+                values,
+                remote_ip(),
+            )
+            flash("指定话题规则已保存，后续巡检会按新话题判断栏目。", "success")
+        except (ValueError, OSError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("rules") + "#section-topic-rules")
+
+    @app.post("/rules/section-topics/<section_value>/delete")
+    @login_required
+    def delete_section_topic_policy(section_value: str):
+        try:
+            version = editor.delete_section_topic_policy(section_value)
+            store.record_audit(
+                "admin",
+                "policy.delete",
+                "section_topic",
+                version,
+                {"section": section_value},
+                remote_ip(),
+            )
+            flash("指定话题规则已删除。", "success")
+        except (ValueError, OSError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("rules") + "#section-topic-rules")
+
+    @app.post("/rules/content-policies")
+    @login_required
+    def upsert_content_policy():
+        values: Dict[str, Any] = dict(request.form)
+        values.pop("csrf_token", None)
+        values["enabled"] = "enabled" in request.form
+        try:
+            version = editor.upsert_content_policy(values)
+            store.record_audit(
+                "admin",
+                "policy.update",
+                "content_policy",
+                version,
+                values,
+                remote_ip(),
+            )
+            flash("重点内容策略已保存，后续巡检会按新要求分析。", "success")
+        except (ValueError, OSError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("rules") + "#content-policy-rules")
+
+    @app.post("/rules/content-policies/<int:index>/delete")
+    @login_required
+    def delete_content_policy(index: int):
+        try:
+            version = editor.delete_content_policy(index)
+            store.record_audit(
+                "admin",
+                "policy.delete",
+                "content_policy",
+                version,
+                {"index": index},
+                remote_ip(),
+            )
+            flash("重点内容策略已删除。", "success")
+        except (ValueError, OSError) as exc:
+            flash(str(exc), "error")
+        return redirect(url_for("rules") + "#content-policy-rules")
 
     @app.post("/rules/terms")
     @login_required
@@ -1049,7 +1130,9 @@ def create_app(
             if current.ai_review.enabled:
                 try:
                     ai_result = AIReviewClient(
-                        current.ai_review, current.database_path
+                        current.ai_review,
+                        current.database_path,
+                        policy_config=current,
                     ).review(
                         item,
                         current.board_policies.get(item.channel_id),
@@ -1057,7 +1140,11 @@ def create_app(
                         rule_moderation,
                     )
                     classification, moderation = fuse_ai_review(
-                        classification, rule_moderation, ai_result, current.ai_review
+                        classification,
+                        rule_moderation,
+                        ai_result,
+                        current.ai_review,
+                        current.section_topic_policies,
                     )
                 except AIReviewUnavailable as exc:
                     ai_error = str(exc)

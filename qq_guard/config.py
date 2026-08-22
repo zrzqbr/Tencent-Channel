@@ -1,9 +1,14 @@
 import json
+import re
+import unicodedata
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Dict, List, Mapping, Optional, Set, Tuple
 
 from .models import Section
+
+
+_HASHTAG_VALUE_RE = re.compile(r"^[\w\u4e00-\u9fff-]{1,30}$", re.UNICODE)
 
 
 @dataclass(frozen=True)
@@ -52,6 +57,22 @@ class BoardPolicy:
 
 
 @dataclass(frozen=True)
+class SectionTopicPolicy:
+    section: Section
+    required_hashtags: Tuple[str, ...] = field(default_factory=tuple)
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
+class ContentPolicy:
+    name: str
+    keywords: Tuple[str, ...] = field(default_factory=tuple)
+    guidance: str = ""
+    action: str = "review"
+    enabled: bool = True
+
+
+@dataclass(frozen=True)
 class ModerationSettings:
     enabled: bool = True
     policy_version: str = "2026-08-19.1"
@@ -94,6 +115,8 @@ class GuardConfig:
     tencent_channel: Optional[TencentChannelSettings] = None
     tencent_channels: Tuple[TencentChannelSettings, ...] = field(default_factory=tuple)
     board_policies: Mapping[str, BoardPolicy] = field(default_factory=dict)
+    section_topic_policies: Mapping[Section, SectionTopicPolicy] = field(default_factory=dict)
+    content_policies: Tuple[ContentPolicy, ...] = field(default_factory=tuple)
     moderation: ModerationSettings = field(default_factory=ModerationSettings)
     ai_review: AIReviewSettings = field(default_factory=AIReviewSettings)
 
@@ -158,6 +181,10 @@ class GuardConfig:
         tencent_channel = tencent_channels[0] if tencent_channels else None
 
         board_policies = _parse_board_policies(raw.get("board_policies", {}))
+        section_topic_policies = _parse_section_topic_policies(
+            raw.get("section_topic_policies", {})
+        )
+        content_policies = _parse_content_policies(raw.get("content_policies", []))
         moderation = _parse_moderation(raw.get("moderation", {}))
         ai_review = _parse_ai_review(raw.get("ai_review", {}))
 
@@ -176,13 +203,15 @@ class GuardConfig:
             tencent_channel=tencent_channel,
             tencent_channels=tencent_channels,
             board_policies=board_policies,
+            section_topic_policies=section_topic_policies,
+            content_policies=content_policies,
             moderation=moderation,
             ai_review=ai_review,
         )
 
 
 def _normalize_hashtag(tag: str) -> str:
-    return str(tag).strip().lstrip("#").casefold()
+    return unicodedata.normalize("NFKC", str(tag)).strip().lstrip("#").casefold()
 
 
 def _parse_tencent_settings(values: Mapping[str, object], path: str) -> TencentChannelSettings:
@@ -241,6 +270,94 @@ def _parse_board_policies(values: object) -> Mapping[str, BoardPolicy]:
             allow_external_links=bool(raw_policy.get("allow_external_links", True)),
         )
     return policies
+
+
+def _parse_section_topic_policies(
+    values: object,
+) -> Mapping[Section, SectionTopicPolicy]:
+    if not isinstance(values, Mapping):
+        raise ValueError("section_topic_policies 必须是对象")
+    policies: Dict[Section, SectionTopicPolicy] = {}
+    for raw_section, raw_policy in values.items():
+        try:
+            section = Section(str(raw_section))
+        except ValueError as exc:
+            raise ValueError(f"section_topic_policies.{raw_section} 栏目无效") from exc
+        if section is Section.UNCLASSIFIED or not isinstance(raw_policy, Mapping):
+            raise ValueError(f"section_topic_policies.{raw_section} 规则无效")
+        raw_hashtags = raw_policy.get("required_hashtags", [])
+        if not isinstance(raw_hashtags, list):
+            raise ValueError(
+                f"section_topic_policies.{raw_section}.required_hashtags 必须是数组"
+            )
+        hashtags: List[str] = []
+        seen = set()
+        for value in raw_hashtags:
+            display_value = str(value).strip().lstrip("#").strip()
+            normalized = _normalize_hashtag(display_value)
+            if display_value and not _HASHTAG_VALUE_RE.fullmatch(display_value):
+                raise ValueError(
+                    f"section_topic_policies.{raw_section} 的指定话题不能包含空格或特殊符号"
+                )
+            if normalized and normalized not in seen:
+                hashtags.append(display_value[:80])
+                seen.add(normalized)
+        enabled = bool(raw_policy.get("enabled", True))
+        if enabled and not hashtags:
+            raise ValueError(
+                f"section_topic_policies.{raw_section} 启用时必须填写指定话题"
+            )
+        policies[section] = SectionTopicPolicy(
+            section=section,
+            required_hashtags=tuple(hashtags),
+            enabled=enabled,
+        )
+    return policies
+
+
+def _parse_content_policies(values: object) -> Tuple[ContentPolicy, ...]:
+    if not isinstance(values, list):
+        raise ValueError("content_policies 必须是数组")
+    policies: List[ContentPolicy] = []
+    for index, raw_policy in enumerate(values):
+        if not isinstance(raw_policy, Mapping):
+            raise ValueError(f"content_policies[{index}] 规则无效")
+        name = str(raw_policy.get("name", "")).strip()
+        guidance = str(raw_policy.get("guidance", "")).strip()
+        raw_keywords = raw_policy.get("keywords", [])
+        action = str(raw_policy.get("action", "review"))
+        if not name or len(name) > 80:
+            raise ValueError(f"content_policies[{index}].name 无效")
+        if not guidance or len(guidance) > 500:
+            raise ValueError(f"content_policies[{index}].guidance 无效")
+        if not isinstance(raw_keywords, list):
+            raise ValueError(f"content_policies[{index}].keywords 必须是数组")
+        keywords: List[str] = []
+        seen = set()
+        for value in raw_keywords:
+            keyword = str(value).strip()
+            normalized = normalize_policy_text(keyword)
+            if normalized and normalized not in seen:
+                keywords.append(keyword[:80])
+                seen.add(normalized)
+        if not keywords:
+            raise ValueError(f"content_policies[{index}] 至少需要一个触发词")
+        if action not in {"notice", "review", "delete_candidate"}:
+            raise ValueError(f"content_policies[{index}].action 无效")
+        policies.append(
+            ContentPolicy(
+                name=name,
+                keywords=tuple(keywords),
+                guidance=guidance,
+                action=action,
+                enabled=bool(raw_policy.get("enabled", True)),
+            )
+        )
+    return tuple(policies)
+
+
+def normalize_policy_text(value: str) -> str:
+    return " ".join(str(value).strip().casefold().split())
 
 
 def _parse_moderation(values: object) -> ModerationSettings:

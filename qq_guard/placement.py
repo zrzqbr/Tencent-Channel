@@ -58,16 +58,19 @@ def placement_review(
 
         item["current_label"] = _current_label(config, channel_id, current["label"])
         item["placement_reason"] = _reason(
-            item, detected, issues, item["current_label"]
+            config, item, detected, issues, item["current_label"]
         )
         item["detected_label"] = detected.display_name
 
-        # Without #topic, the system must never recommend moving a post into 每周一问.
+        missing_topic = "missing_weekly_hashtag" in issues or any(
+            str(issue).startswith("missing_required_hashtag:") for issue in issues
+        )
+        # Without the current required topic, never recommend moving a post into that section.
         if detected is Section.UNCLASSIFIED or (
-            detected is Section.WEEKLY_QUESTION and "missing_weekly_hashtag" in issues
+            detected is Section.WEEKLY_QUESTION and missing_topic
         ):
-            if "missing_weekly_hashtag" in issues:
-                item["attention_message"] = "缺少井号话题，不能按规则归入每周一问；请补话题或人工选择其他栏目。"
+            if missing_topic:
+                item["attention_message"] = _missing_topic_message(config, issues)
                 attention.append(item)
             continue
 
@@ -113,12 +116,18 @@ def _current_label(config: GuardConfig, channel_id: str, fallback: str) -> str:
 
 
 def _reason(
-    item: Mapping[str, Any], detected: Section, issues: set, current_label: str
+    config: GuardConfig,
+    item: Mapping[str, Any],
+    detected: Section,
+    issues: set,
+    current_label: str,
 ) -> str:
     classification = item.get("classification") or {}
     reasons = [str(value) for value in classification.get("reasons") or [] if value]
     if "missing_weekly_hashtag" in issues:
-        return "这条内容没有带规定的话题标签，不能直接归入“每周一问”。"
+        return _missing_topic_message_from_section(config, Section.WEEKLY_QUESTION)
+    if any(str(issue).startswith("missing_required_hashtag:") for issue in issues):
+        return _missing_topic_message(config, issues)
     if reasons:
         reason = reasons[0].strip()
         technical_markers = (
@@ -141,3 +150,27 @@ def _reason(
         f"内容表现为“{detected.display_name}”，与当前“{current_label}”的发布要求不一致。"
         "请查看完整内容后确认是否移动。"
     )
+
+
+def _missing_topic_message(config: GuardConfig, issues: set) -> str:
+    section = Section.WEEKLY_QUESTION
+    for issue in issues:
+        value = str(issue)
+        if not value.startswith("missing_required_hashtag:"):
+            continue
+        try:
+            section = Section(value.partition(":")[2])
+        except ValueError:
+            pass
+        break
+    return _missing_topic_message_from_section(config, section)
+
+
+def _missing_topic_message_from_section(
+    config: GuardConfig, section: Section
+) -> str:
+    policy = config.section_topic_policies.get(section)
+    if policy and policy.enabled:
+        required = " 或 ".join(f"#{value}" for value in policy.required_hashtags)
+        return f"缺少{section.display_name}当前指定话题 {required}；请补充话题后再决定栏目。"
+    return f"缺少井号话题，不能按规则归入{section.display_name}；请补充话题后再决定栏目。"

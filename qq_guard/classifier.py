@@ -33,22 +33,53 @@ class ContentClassifier:
 
         mapped_section = self.config.channel_sections.get(item.channel_id)
         weekly_words_present = self._contains_any(plain_text, self.config.rules.weekly_phrase_keywords)
+        topic_section = self._section_from_required_topic(hashtag_set)
+        if topic_section is not None:
+            topic = self._matching_required_topic(topic_section, hashtag_set)
+            reasons.append(
+                f"内容带有指定话题 #{topic}，按当前规则应归入{topic_section.display_name}"
+            )
+            return self._result(
+                topic_section,
+                1.0,
+                reasons,
+                hashtags,
+                has_media,
+                plain_text,
+            )
+
         if mapped_section is Section.WEEKLY_QUESTION:
+            if self._required_topic_missing(mapped_section, hashtag_set):
+                return self._required_topic_missing_result(
+                    mapped_section, hashtags, has_media, plain_text
+                )
             if self.config.rules.weekly_requires_any_hashtag and not hashtags:
                 return self._weekly_missing_topic(hashtags, has_media, plain_text)
-            reasons.append("子频道已配置为每周一问，且内容带井号话题")
+            reasons.append("当前栏目是每周一问，且内容符合已设置的话题要求")
             return self._result(Section.WEEKLY_QUESTION, 1.0, reasons, hashtags, has_media, plain_text)
 
         if mapped_section is not None:
+            if self._required_topic_missing(mapped_section, hashtag_set):
+                return self._required_topic_missing_result(
+                    mapped_section, hashtags, has_media, plain_text
+                )
             reasons.append(f"子频道固定映射为{mapped_section.display_name}")
             return self._result(mapped_section, 1.0, reasons, hashtags, has_media, plain_text)
 
         explicit_section = self._section_from_hashtags(hashtag_set)
         if explicit_section is not None:
+            if self._required_topic_missing(explicit_section, hashtag_set):
+                return self._required_topic_missing_result(
+                    explicit_section, hashtags, has_media, plain_text
+                )
             reasons.append(f"命中栏目井号话题：#{self._matching_hashtag(explicit_section, hashtag_set)}")
             return self._result(explicit_section, 0.99, reasons, hashtags, has_media, plain_text)
 
         if weekly_words_present:
+            if self._required_topic_missing(Section.WEEKLY_QUESTION, hashtag_set):
+                return self._required_topic_missing_result(
+                    Section.WEEKLY_QUESTION, hashtags, has_media, plain_text
+                )
             if self.config.rules.weekly_requires_any_hashtag and not hashtags:
                 return self._weekly_missing_topic(hashtags, has_media, plain_text)
             reasons.append("正文出现每周一问语义，并带有井号话题")
@@ -101,11 +132,69 @@ class ContentClassifier:
             issues=["missing_weekly_hashtag"],
         )
 
+    def _required_topic_missing_result(
+        self,
+        section: Section,
+        hashtags: Sequence[str],
+        has_media: bool,
+        plain_text: str,
+    ) -> ClassificationResult:
+        topics = self._required_topic_labels(section)
+        issue = (
+            "missing_weekly_hashtag"
+            if section is Section.WEEKLY_QUESTION
+            else f"missing_required_hashtag:{section.value}"
+        )
+        return self._result(
+            Section.UNCLASSIFIED,
+            0.95,
+            [
+                f"内容准备归入{section.display_name}，但缺少当前指定话题：{topics}"
+            ],
+            hashtags,
+            has_media,
+            plain_text,
+            issues=[issue],
+        )
+
     def _section_from_hashtags(self, hashtags: Set[str]) -> Optional[Section]:
         for section in _EXPLICIT_PRIORITY:
             if self._has_section_hashtag(section, hashtags):
                 return section
         return None
+
+    def _section_from_required_topic(self, hashtags: Set[str]) -> Optional[Section]:
+        for section in _EXPLICIT_PRIORITY:
+            policy = self.config.section_topic_policies.get(section)
+            if policy is None or not policy.enabled:
+                continue
+            configured = {normalize_text(value).lstrip("#") for value in policy.required_hashtags}
+            if configured.intersection(hashtags):
+                return section
+        return None
+
+    def _required_topic_missing(self, section: Section, hashtags: Set[str]) -> bool:
+        policy = self.config.section_topic_policies.get(section)
+        if policy is None or not policy.enabled:
+            return False
+        configured = {normalize_text(value).lstrip("#") for value in policy.required_hashtags}
+        return not bool(configured.intersection(hashtags))
+
+    def _matching_required_topic(self, section: Section, hashtags: Set[str]) -> str:
+        policy = self.config.section_topic_policies.get(section)
+        if policy is None:
+            return ""
+        display_by_normalized = {
+            normalize_text(value).lstrip("#"): value for value in policy.required_hashtags
+        }
+        match = sorted(set(display_by_normalized).intersection(hashtags))[0]
+        return display_by_normalized[match]
+
+    def _required_topic_labels(self, section: Section) -> str:
+        policy = self.config.section_topic_policies.get(section)
+        if policy is None:
+            return ""
+        return " 或 ".join(f"#{value}" for value in policy.required_hashtags)
 
     def _has_section_hashtag(self, section: Section, hashtags: Set[str]) -> bool:
         configured = self.config.section_hashtags.get(section, set())

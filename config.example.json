@@ -21,6 +21,21 @@
     "min_featured_text_length": 220,
     "weekly_requires_any_hashtag": true
   },
+  "section_topic_policies": {
+    "weekly_question": {
+      "enabled": true,
+      "required_hashtags": ["WorkBuddy的哇塞瞬间"]
+    }
+  },
+  "content_policies": [
+    {
+      "name": "小红书相关内容",
+      "keywords": ["小红书", "XHS", "rednote"],
+      "guidance": "避免直接作答，提醒管理员核对是否适合在频道中讨论",
+      "action": "review",
+      "enabled": true
+    }
+  ],
   "board_policies": {},
   "moderation": {
     "enabled": true,

@@ -641,6 +641,46 @@ class WebTests(unittest.TestCase):
         self.assertTrue(any(item["term"] == "blockedword" for item in raw["moderation"]["terms"]))
         self.assertNotEqual(raw["moderation"]["policy_version"], "2026-08-19.1")
 
+    def test_admin_can_manage_current_topics_and_content_policies(self):
+        response = self.login()
+        response = self.client.post(
+            "/rules/section-topics",
+            data={
+                "csrf_token": self.csrf(response),
+                "section": "weekly_question",
+                "required_hashtags": "#WorkBuddy的哇塞瞬间",
+                "enabled": "on",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("指定话题规则已保存".encode("utf-8"), response.data)
+        self.assertIn("#WorkBuddy的哇塞瞬间".encode("utf-8"), response.data)
+
+        response = self.client.post(
+            "/rules/content-policies",
+            data={
+                "csrf_token": self.csrf(response),
+                "name": "小红书相关内容",
+                "keywords": "小红书，XHS，rednote",
+                "guidance": "避免直接作答，提醒管理员核对是否适合在频道中讨论",
+                "action": "review",
+                "enabled": "on",
+            },
+            follow_redirects=True,
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("重点内容策略已保存".encode("utf-8"), response.data)
+        self.assertIn("需要人工核对".encode("utf-8"), response.data)
+
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        self.assertEqual(
+            raw["section_topic_policies"]["weekly_question"]["required_hashtags"],
+            ["WorkBuddy的哇塞瞬间"],
+        )
+        self.assertEqual(raw["content_policies"][0]["keywords"], ["小红书", "XHS", "rednote"])
+        self.assertEqual(raw["content_policies"][0]["action"], "review")
+
     def test_ai_settings_use_tokenhub_hy3_and_vita(self):
         self.login()
         response = self.client.get("/rules")

@@ -1006,6 +1006,7 @@ class TencentChannelMonitor:
                     self.ai_client = AIReviewClient(
                         self.config.ai_review,
                         self.database_path,
+                        policy_config=self.config,
                     )
                 ai = self.ai_client.review(
                     item,
@@ -1015,7 +1016,11 @@ class TencentChannelMonitor:
                     context_items,
                 )
                 classification, assessment = fuse_ai_review(
-                    classification, rule_assessment, ai, self.config.ai_review
+                    classification,
+                    rule_assessment,
+                    ai,
+                    self.config.ai_review,
+                    self.config.section_topic_policies,
                 )
                 self._ai_reviewed += 1
                 analysis_source = "ai"

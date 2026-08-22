@@ -23,7 +23,14 @@ class ClassifierTests(unittest.TestCase):
                         "practical_article": ["实用文章"],
                         "qa_discussion": ["问答与交流"],
                         "official_news": ["官方资讯"]
-                    }
+                    },
+                    "channel_sections": {"practical-board": "practical_article"},
+                    "section_topic_policies": {
+                        "weekly_question": {
+                            "enabled": True,
+                            "required_hashtags": ["WorkBuddy的哇塞瞬间"],
+                        }
+                    },
                 },
                 ensure_ascii=False,
             ),
@@ -53,16 +60,31 @@ class ClassifierTests(unittest.TestCase):
         self.assertIn("missing_weekly_hashtag", result.validation_issues)
 
     def test_weekly_question_with_topic_is_accepted(self) -> None:
-        result = self.classifier.classify(self.item("#效率工具 每周一问：你最常用什么工具？"))
+        result = self.classifier.classify(
+            self.item("#WorkBuddy的哇塞瞬间 每周一问：你最常用什么工具？")
+        )
         self.assertEqual(result.section, Section.WEEKLY_QUESTION)
 
-    def test_explicit_weekly_hashtag_is_accepted(self) -> None:
+    def test_other_weekly_hashtag_cannot_replace_current_topic(self) -> None:
         result = self.classifier.classify(self.item("#每周一问 分享你的答案"))
-        self.assertEqual(result.section, Section.WEEKLY_QUESTION)
+        self.assertEqual(result.section, Section.UNCLASSIFIED)
+        self.assertIn("missing_weekly_hashtag", result.validation_issues)
 
     def test_hashtag_can_touch_preceding_chinese_text(self) -> None:
-        result = self.classifier.classify(self.item("欢迎参与#每周一问 分享你的答案"))
+        result = self.classifier.classify(
+            self.item("欢迎参与#WorkBuddy的哇塞瞬间 分享你的答案")
+        )
         self.assertEqual(result.section, Section.WEEKLY_QUESTION)
+
+    def test_current_topic_overrides_wrong_practical_board(self) -> None:
+        result = self.classifier.classify(
+            self.item(
+                "实用文章正文 #WorkBuddy的哇塞瞬间",
+                channel_id="practical-board",
+            )
+        )
+        self.assertEqual(result.section, Section.WEEKLY_QUESTION)
+        self.assertIn("按当前规则应归入每周一问", result.reasons[0])
 
     def test_question_goes_to_qa(self) -> None:
         result = self.classifier.classify(self.item("请问大家如何解决这个部署问题？"))

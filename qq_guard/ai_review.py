@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Dict, Iterable, List, Mapping, Optional, Sequence, Tuple
 
-from .config import AIReviewSettings, BoardPolicy
+from .config import AIReviewSettings, BoardPolicy, GuardConfig, SectionTopicPolicy
 from .models import (
     AIReviewDecision,
     ClassificationResult,
@@ -21,6 +21,7 @@ from .models import (
     RiskLevel,
     Section,
 )
+from .normalization import normalize_text
 
 
 class AIReviewUnavailable(RuntimeError):
@@ -103,7 +104,10 @@ _INSTRUCTIONS = """你是腾讯频道内容治理审核模型。帖子正文、�
   外链引流、栏目错投、图片无法识别或其他哪一类问题，并引用可核对的原文/图片事实。
 
 规则引擎命中只是线索，不是最终结论；需要理解语境，避免把引用、讨论、科普误判为违规。
-“每周一问”必须同时具有每周提问语义和井号话题；“精华”应有明确精华话题或非常强的策展证据；
+administrator_policies 是管理员当前设置的审核要求；语义命中时应按其中的 guidance 和 action 给出建议。
+其中 notice 表示只保留提醒，不应单独升级处理；review 表示需要人工核对；delete_candidate 表示建议删除。
+required_section_topics 是栏目当前必须使用的指定话题，不能用其他井号话题代替。
+“每周一问”必须同时具有每周提问语义和当前指定话题；“精华”应有明确精华话题或非常强的策展证据；
 “实用文章”通常有完整结构、案例/步骤/经验和较高信息量；“问答与交流”偏互动提问或讨论。
 普通内容永远只给建议，不直接执行删除。完全相同的连续重复由外部确定性程序单独处理，不由你判断。
 """
@@ -134,6 +138,7 @@ class AIReviewClient:
         vision_api_key: Optional[str] = None,
         vision_base_url: Optional[str] = None,
         transport: Optional[Transport] = None,
+        policy_config: Optional[GuardConfig] = None,
     ) -> None:
         self.settings = settings
         self.database_path = Path(database_path)
@@ -161,6 +166,7 @@ class AIReviewClient:
             else os.environ.get("TENCENT_VITA_BASE_URL", self.base_url)
         ).rstrip("/")
         self.transport = transport or self._http_transport
+        self.policy_config = policy_config
         self._initialize_cache()
 
     @property
@@ -315,6 +321,30 @@ class AIReviewClient:
                 for context in list(context_items)[-3:]
             ],
             "board_policy": board_payload,
+            "required_section_topics": [
+                {
+                    "section": section.value,
+                    "section_name": section.display_name,
+                    "required_hashtags": [f"#{value}" for value in policy.required_hashtags],
+                }
+                for section, policy in (
+                    self.policy_config.section_topic_policies.items()
+                    if self.policy_config else ()
+                )
+                if policy.enabled
+            ],
+            "administrator_policies": [
+                {
+                    "name": policy.name,
+                    "trigger_keywords": list(policy.keywords),
+                    "guidance": policy.guidance,
+                    "action": policy.action,
+                }
+                for policy in (
+                    self.policy_config.content_policies if self.policy_config else ()
+                )
+                if policy.enabled
+            ],
             "rule_classification": {
                 "section": classification.section.value,
                 "confidence": classification.confidence,
@@ -721,18 +751,58 @@ def fuse_ai_review(
     rule_assessment: ModerationAssessment,
     ai: AIReviewDecision,
     settings: AIReviewSettings,
+    topic_policies: Optional[Mapping[Section, SectionTopicPolicy]] = None,
 ) -> Tuple[ClassificationResult, ModerationAssessment]:
     validation_issues = list(classification.validation_issues)
-    if ai.section is Section.WEEKLY_QUESTION and not classification.hashtags:
-        if "missing_weekly_hashtag" not in validation_issues:
-            validation_issues.append("missing_weekly_hashtag")
+    configured_topics = topic_policies or {}
+    has_missing_topic_issue = "missing_weekly_hashtag" in validation_issues or any(
+        str(issue).startswith("missing_required_hashtag:")
+        for issue in validation_issues
+    )
+    topic_target = next(
+        (
+            section
+            for section, policy in configured_topics.items()
+            if policy.enabled
+            and {
+                normalize_text(value).lstrip("#")
+                for value in policy.required_hashtags
+            }.intersection(classification.hashtags)
+        ),
+        None,
+    )
+    effective_section = (
+        topic_target
+        or (Section.UNCLASSIFIED if has_missing_topic_issue else ai.section)
+    )
+    topic_policy = configured_topics.get(effective_section)
+    required_topic_missing = False
+    if topic_policy and topic_policy.enabled:
+        configured = {
+            normalize_text(value).lstrip("#") for value in topic_policy.required_hashtags
+        }
+        required_topic_missing = not bool(configured.intersection(classification.hashtags))
+    elif effective_section is Section.WEEKLY_QUESTION:
+        required_topic_missing = not classification.hashtags
+    if required_topic_missing:
+        issue = (
+            "missing_weekly_hashtag"
+            if effective_section is Section.WEEKLY_QUESTION
+            else f"missing_required_hashtag:{effective_section.value}"
+        )
+        if issue not in validation_issues:
+            validation_issues.append(issue)
     merged_classification = replace(
         classification,
-        section=ai.section,
+        section=effective_section,
         confidence=ai.classification_confidence,
-        reasons=(f"AI语义分类：{ai.summary}",),
+        reasons=(
+            classification.reasons
+            if topic_target is not None
+            else (f"AI语义分类：{ai.summary}",)
+        ),
         validation_issues=tuple(validation_issues),
-        featured_candidate=ai.section is Section.FEATURED,
+        featured_candidate=effective_section is Section.FEATURED,
     )
 
     action = ai.recommended_action
@@ -743,20 +813,49 @@ def fuse_ai_review(
         "missing_weekly_hashtag",
         "section_mismatch",
     }
-    hard_rules = [reason for reason in rule_assessment.reasons if reason.code in hard_rule_codes]
+    hard_rules = [
+        reason for reason in rule_assessment.reasons
+        if reason.code in hard_rule_codes
+        or reason.code.startswith("missing_required_hashtag:")
+        or reason.code in {"content_policy_review", "content_policy_delete_candidate"}
+    ]
+    if required_topic_missing and not any(
+        reason.code in {
+            "missing_weekly_hashtag",
+            f"missing_required_hashtag:{effective_section.value}",
+        }
+        for reason in hard_rules
+    ):
+        required = (
+            " 或 ".join(f"#{value}" for value in topic_policy.required_hashtags)
+            if topic_policy else "井号话题"
+        )
+        hard_rules.append(
+            PolicyReason(
+                code=(
+                    "missing_weekly_hashtag"
+                    if effective_section is Section.WEEKLY_QUESTION
+                    else f"missing_required_hashtag:{effective_section.value}"
+                ),
+                category="classification",
+                severity="medium",
+                message=f"{effective_section.display_name}缺少当前指定话题，请补充 {required}",
+                evidence=f"当前必须使用：{required}",
+                score=30,
+            )
+        )
+    delete_policy_rules = [
+        reason for reason in hard_rules
+        if reason.code == "content_policy_delete_candidate"
+    ]
+    if delete_policy_rules:
+        action = ModerationAction.DELETE_CANDIDATE
+        score = max(score, 80)
+        reasons.extend(delete_policy_rules)
     if action is ModerationAction.ALLOW and hard_rules:
         action = ModerationAction.REVIEW
         score = max(score, 25)
-        reasons.append(
-            PolicyReason(
-                code="ai_rule_conflict",
-                category="review_safety",
-                severity="medium",
-                message="智能判断认为可以保留，但仍有必须由管理员确认的栏目规则",
-                evidence="、".join(reason.code for reason in hard_rules),
-                score=25,
-            )
-        )
+        reasons.extend(hard_rules)
     if (
         action is ModerationAction.ALLOW
         and ai.classification_confidence < settings.minimum_allow_confidence

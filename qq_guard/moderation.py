@@ -56,6 +56,39 @@ class ModerationEngine:
         reasons: List[PolicyReason] = []
         delete_candidate_hit = False
 
+        for policy in self.config.content_policies:
+            if not policy.enabled:
+                continue
+            matched_keywords = [
+                keyword
+                for keyword in policy.keywords
+                if normalize_text(keyword) in text
+            ]
+            if not matched_keywords:
+                continue
+            severity, score = {
+                "notice": ("low", 0),
+                "review": ("medium", max(25, self.settings.review_threshold)),
+                "delete_candidate": (
+                    "high",
+                    max(80, self.settings.delete_candidate_threshold),
+                ),
+            }[policy.action]
+            reasons.append(
+                PolicyReason(
+                    code=f"content_policy_{policy.action}",
+                    category="content_policy",
+                    severity=severity,
+                    message=f"涉及“{policy.name}”：{policy.guidance}",
+                    evidence="触发内容：" + "、".join(matched_keywords[:5]),
+                    score=score,
+                    auto_delete_eligible=False,
+                )
+            )
+            delete_candidate_hit = (
+                delete_candidate_hit or policy.action == "delete_candidate"
+            )
+
         for rule in self.settings.terms:
             evidence = self._match_sensitive_term(text, rule)
             if evidence is None:
@@ -264,14 +297,42 @@ class ModerationEngine:
         vowel_count = sum(char in "aeiou" for char in text.casefold())
         return vowel_count / len(text) < 0.2
 
-    @staticmethod
-    def _validation_reason(issue: str) -> PolicyReason:
+    def _validation_reason(self, issue: str) -> PolicyReason:
         if issue == "missing_weekly_hashtag":
+            policy = self.config.section_topic_policies.get(Section.WEEKLY_QUESTION)
+            if policy and policy.enabled:
+                required = " 或 ".join(f"#{value}" for value in policy.required_hashtags)
+                return PolicyReason(
+                    code=issue,
+                    category="classification",
+                    severity="medium",
+                    message=f"每周一问缺少当前指定话题，请补充 {required}",
+                    evidence=f"当前必须使用：{required}",
+                    score=30,
+                )
             return PolicyReason(
                 code=issue,
                 category="classification",
                 severity="medium",
                 message="内容具有每周一问语义，但缺少必需的井号话题",
+                score=30,
+            )
+        if issue.startswith("missing_required_hashtag:"):
+            section_value = issue.partition(":")[2]
+            try:
+                section = Section(section_value)
+            except ValueError:
+                section = Section.UNCLASSIFIED
+            policy = self.config.section_topic_policies.get(section)
+            required = " 或 ".join(
+                f"#{value}" for value in policy.required_hashtags
+            ) if policy else "规定话题"
+            return PolicyReason(
+                code=issue,
+                category="classification",
+                severity="medium",
+                message=f"{section.display_name}缺少当前指定话题，请补充 {required}",
+                evidence=f"当前必须使用：{required}",
                 score=30,
             )
         return PolicyReason(
