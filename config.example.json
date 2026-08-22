@@ -65,5 +65,13 @@
     "include_images": true,
     "max_images": 3
   },
+  "knowledge_base": {
+    "enabled": false,
+    "cli_path": "/srv/tencent-channel/knowledge/current/workbuddy-kb",
+    "top_k": 5,
+    "timeout_seconds": 20,
+    "answer_model": "hy3",
+    "max_answer_chars": 1200
+  },
   "tencent_channels": []
 }

@@ -1,0 +1,19 @@
+[Unit]
+Description=Update WorkBuddy Official Knowledge Base
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=txa_deployer
+Group=txa_deployer
+WorkingDirectory=/srv/tencent-channel/knowledge/current
+EnvironmentFile=-/etc/workbuddy-kb.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/srv/tencent-channel/knowledge/venv/bin/python /srv/tencent-channel/knowledge/current/workbuddy-kb update --json
+TimeoutStartSec=30min
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/srv/tencent-channel/knowledge

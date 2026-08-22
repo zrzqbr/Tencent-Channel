@@ -1,0 +1,11 @@
+[Unit]
+Description=Update WorkBuddy Official Knowledge Base Daily
+
+[Timer]
+OnCalendar=*-*-* 09:00:00 Asia/Shanghai
+Persistent=true
+AccuracySec=5min
+Unit=workbuddy-kb-update.service
+
+[Install]
+WantedBy=timers.target

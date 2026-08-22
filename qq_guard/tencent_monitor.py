@@ -12,6 +12,7 @@ from typing import Any, Callable, Dict, List, Mapping, Optional, Protocol, Seque
 from .ai_review import AIReviewClient, AIReviewUnavailable, fuse_ai_review
 from .classifier import ContentClassifier
 from .config import GuardConfig, TencentChannelSettings
+from .knowledge_base import KnowledgeAnswerService
 from .models import IncomingContent, ItemKind, PolicyReason, Section
 from .moderation import ModerationEngine
 from .scan_control import ScanLock
@@ -195,6 +196,7 @@ class TencentChannelMonitor:
         config: GuardConfig,
         api: Optional[TencentFeedApi],
         ai_client: Optional[AIReviewClient] = None,
+        knowledge_service: Optional[KnowledgeAnswerService] = None,
         progress_callback: Optional[Callable[[int, str, str], None]] = None,
     ) -> None:
         settings = config.tencent_channels or (
@@ -210,6 +212,7 @@ class TencentChannelMonitor:
         self.database_path = Path(config.database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
         self.ai_client = ai_client
+        self.knowledge_service = knowledge_service
         self.progress_callback = progress_callback
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
@@ -1059,6 +1062,29 @@ class TencentChannelMonitor:
                     self._ai_vision_fallbacks += 1
                 ai_error = str(exc)[:500]
                 ai_analysis["error"] = ai_error
+        if (
+            self.config.knowledge_base.enabled
+            and classification.section is Section.QA_DISCUSSION
+        ):
+            try:
+                if self.knowledge_service is None:
+                    self.knowledge_service = KnowledgeAnswerService(
+                        self.config.knowledge_base,
+                        self.database_path,
+                    )
+                self.knowledge_service.process_question(
+                    guild_id=settings.guild_id,
+                    guild_name=settings.name or settings.guild_id,
+                    channel_id=channel_id,
+                    feed_id=item.platform_item_id,
+                    feed_create_time=item.created_at or "",
+                    title=item.title,
+                    body=item.body,
+                    author_id=item.author_id,
+                )
+            except (OSError, ValueError, sqlite3.Error):
+                # Knowledge lookup must never prevent the moderation result from being saved.
+                pass
         if assessment.action.value == "allow" and not assessment.reasons:
             return classification, []
         finding = ModerationFinding(

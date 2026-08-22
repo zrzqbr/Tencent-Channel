@@ -18,6 +18,7 @@ NoNewPrivileges=true
 PrivateTmp=true
 ProtectHome=true
 ProtectSystem=full
+ReadOnlyPaths=/srv/tencent-channel/knowledge
 ReadWritePaths=/srv/tencent-channel/shared /srv/tencent-channel/home
 
 [Install]

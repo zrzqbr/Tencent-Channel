@@ -7,6 +7,39 @@ from qq_guard.tencent_cli import TencentCliClient
 
 
 class TencentCliClientTests(unittest.TestCase):
+    def test_comment_feed_uses_official_do_comment_parameters(self):
+        schema = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"command": "feed.do-comment"}),
+            stderr="",
+        )
+        result = subprocess.CompletedProcess(
+            args=[],
+            returncode=0,
+            stdout=json.dumps({"success": True, "data": {"comment_id": "1"}}),
+            stderr="",
+        )
+        with patch("qq_guard.tencent_cli.shutil.which", return_value="/usr/bin/tencent-channel-cli"):
+            client = TencentCliClient(min_interval_seconds=0)
+        with patch("qq_guard.tencent_cli.subprocess.run", side_effect=[schema, result]) as run:
+            client.comment_feed("123", "456", "feed_1", "1787450000", "官方回复")
+        command = run.call_args.args[0]
+        payload = json.loads(run.call_args.kwargs["input"])
+        self.assertIn("do-comment", command)
+        self.assertIn("--yes", command)
+        self.assertEqual(
+            payload,
+            {
+                "feed_id": "feed_1",
+                "feed_create_time": "1787450000",
+                "guild_id": "123",
+                "channel_id": "456",
+                "comment_type": 1,
+                "content": "官方回复",
+            },
+        )
+
     def test_uses_explicit_shared_credential_home(self):
         completed = subprocess.CompletedProcess(
             args=[],

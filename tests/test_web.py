@@ -26,9 +26,11 @@ class FakeTencentClient:
         self.deleted = []
         self.moved = []
         self.edited = []
+        self.comments = []
         self.capability_calls = []
         self.delete_error = None
         self.detail_error = None
+        self.comment_error = None
 
     def capability_index(self):
         return [
@@ -108,6 +110,12 @@ class FakeTencentClient:
             (guild_id, channel_id, feed_id, create_time, feed_type, title, content, markdown)
         )
         return {"success": True}
+
+    def comment_feed(self, guild_id, channel_id, feed_id, feed_create_time, content):
+        self.comments.append((guild_id, channel_id, feed_id, feed_create_time, content))
+        if self.comment_error is not None:
+            raise self.comment_error
+        return {"success": True, "data": {"comment_id": "comment-1"}}
 
 
 class WebTests(unittest.TestCase):
@@ -266,6 +274,43 @@ class WebTests(unittest.TestCase):
                 (feed_id, json.dumps(detail, ensure_ascii=False)),
             )
 
+    def insert_knowledge_answer(
+        self,
+        *,
+        status="ready",
+        can_answer=True,
+        generation_status="completed",
+        reply_status="not_replied",
+    ) -> int:
+        AdminStore(self.database_path)
+        with sqlite3.connect(str(self.database_path)) as connection:
+            cursor = connection.execute(
+                """
+                INSERT INTO knowledge_answer_drafts
+                (guild_id, guild_name, channel_id, feed_id, feed_create_time, title, body,
+                 author_id, question_hash, knowledge_status, can_answer, coverage, draft,
+                 sources_json, matches_json, index_updated_at, answer_model,
+                 generation_status, generation_error, reply_status, reply_error,
+                 replied_at, created_at, updated_at)
+                VALUES ('1', 'WorkBuddy', '2', 'feed-question', '123456', '积分怎么充值',
+                        '积分怎么充值', 'author', 'hash', ?, ?, 'strong', ?, ?, ?,
+                        '2026-08-23T09:00:00+08:00', 'hy3', ?, '', ?, '', NULL,
+                        '2026-08-23T01:00:00+00:00', '2026-08-23T01:00:00+00:00')
+                """,
+                (
+                    status,
+                    int(can_answer),
+                    "付费会员可购买加量包。\n\n参考资料：[定价](https://www.workbuddy.cn/docs/workbuddy/Pricing)"
+                    if generation_status == "completed"
+                    else "",
+                    json.dumps([{"title": "定价", "url": "https://www.workbuddy.cn/docs/workbuddy/Pricing"}], ensure_ascii=False),
+                    json.dumps([{"title": "定价", "passages": [{"heading": "个人版", "text": "付费会员可以购买加量包。"}]}], ensure_ascii=False),
+                    generation_status,
+                    reply_status,
+                ),
+            )
+            return int(cursor.lastrowid)
+
     def test_dashboard_requires_login(self):
         response = self.client.get("/")
         self.assertEqual(response.status_code, 302)
@@ -362,6 +407,7 @@ class WebTests(unittest.TestCase):
                     row_id,
                 ),
             )
+
             weekly_detail = {
                 "guild_id": "1",
                 "channel_id": "4",
@@ -663,10 +709,90 @@ class WebTests(unittest.TestCase):
 
     def test_all_admin_pages_render_after_login(self):
         self.login()
-        for path in ["/contents", "/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test", "/official"]:
+        for path in ["/contents", "/knowledge-answers", "/reviews", "/placements", "/ai-analysis", "/duplicates", "/rules", "/channels", "/audit", "/test", "/official"]:
             with self.subTest(path=path):
                 response = self.client.get(path)
                 self.assertEqual(response.status_code, 200)
+
+    def test_knowledge_page_explains_human_review_and_official_sources(self):
+        self.insert_knowledge_answer()
+        self.login()
+        response = self.client.get("/knowledge-answers")
+        self.assertIn("积分怎么充值".encode("utf-8"), response.data)
+        self.assertIn("回复草稿".encode("utf-8"), response.data)
+        self.assertIn("查看官方依据".encode("utf-8"), response.data)
+        self.assertIn("不会自动回复".encode("utf-8"), response.data)
+        self.assertIn(b"https://www.workbuddy.cn/docs/workbuddy/Pricing", response.data)
+
+    def test_review_knowledge_result_has_no_publish_button(self):
+        self.insert_knowledge_answer(
+            status="review", can_answer=False, generation_status="not_allowed"
+        )
+        self.login()
+        response = self.client.get("/knowledge-answers?status=review")
+        self.assertIn("先由管理员核对".encode("utf-8"), response.data)
+        self.assertNotIn(b'action="/knowledge-answers/1/publish"', response.data)
+
+    def test_ready_answer_publishes_with_official_comment_and_audit(self):
+        row_id = self.insert_knowledge_answer()
+        response = self.login()
+        response = self.client.get("/knowledge-answers")
+        with patch.dict(os.environ, {"QQ_GUARD_OFFICIAL_WRITES_ENABLED": "true"}):
+            response = self.client.post(
+                f"/knowledge-answers/{row_id}/publish",
+                data={
+                    "csrf_token": self.csrf(response),
+                    "status": "ready",
+                    "draft": "付费会员可购买加量包。",
+                },
+                follow_redirects=True,
+            )
+        self.assertIn("回复已发布到原帖".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.comments[0][:4], ("1", "2", "feed-question", "123456"))
+        self.assertIn("https://www.workbuddy.cn/docs/workbuddy/Pricing", self.fake_cli.comments[0][4])
+        with sqlite3.connect(str(self.database_path)) as connection:
+            state = connection.execute(
+                "SELECT reply_status FROM knowledge_answer_drafts WHERE id = ?", (row_id,)
+            ).fetchone()[0]
+            audit = connection.execute(
+                "SELECT action FROM admin_audit_actions WHERE target_id = 'feed-question' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertEqual(state, "published")
+        self.assertEqual(audit, "knowledge.reply.published")
+
+    def test_knowledge_publish_requires_official_writes(self):
+        row_id = self.insert_knowledge_answer()
+        response = self.login()
+        response = self.client.get("/knowledge-answers")
+        response = self.client.post(
+            f"/knowledge-answers/{row_id}/publish",
+            data={"csrf_token": self.csrf(response), "draft": "不能发送"},
+            follow_redirects=True,
+        )
+        self.assertIn("频道回复功能尚未开启".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.comments, [])
+
+    def test_failed_knowledge_reply_is_recorded_and_audited(self):
+        row_id = self.insert_knowledge_answer()
+        self.fake_cli.comment_error = TencentCliError("internal channel error")
+        response = self.login()
+        response = self.client.get("/knowledge-answers")
+        with patch.dict(os.environ, {"QQ_GUARD_OFFICIAL_WRITES_ENABLED": "true"}):
+            response = self.client.post(
+                f"/knowledge-answers/{row_id}/publish",
+                data={"csrf_token": self.csrf(response), "draft": "付费会员可购买加量包。"},
+                follow_redirects=True,
+            )
+        self.assertIn("本次操作没有完成".encode("utf-8"), response.data)
+        with sqlite3.connect(str(self.database_path)) as connection:
+            state = connection.execute(
+                "SELECT reply_status FROM knowledge_answer_drafts WHERE id = ?", (row_id,)
+            ).fetchone()[0]
+            action = connection.execute(
+                "SELECT action FROM admin_audit_actions WHERE target_id = 'feed-question' ORDER BY id DESC LIMIT 1"
+            ).fetchone()[0]
+        self.assertEqual(state, "failed")
+        self.assertEqual(action, "knowledge.reply.failed")
 
     def test_all_content_page_includes_posts_without_moderation_findings(self):
         self.insert_cached_content()

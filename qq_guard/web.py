@@ -133,6 +133,7 @@ def create_app(
     app = Flask(__name__)
     app.jinja_env.filters["cn_time"] = _cn_time
     app.jinja_env.filters["public_ai_error"] = _public_ai_error
+    app.jinja_env.filters["public_operation_error"] = _public_operation_error
     app.jinja_env.filters["plain_ai_text"] = _plain_ai_text
     app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
     app.config.update(
@@ -359,6 +360,67 @@ def create_app(
             move_targets=_configured_move_targets(current, channel_catalog),
             latest_sync=store.latest_content_sync(),
         )
+
+    @app.get("/knowledge-answers")
+    @login_required
+    def knowledge_answers():
+        selected_status = request.args.get("status", "ready")
+        if selected_status not in {"ready", "review", "unavailable", "published", "failed"}:
+            selected_status = "ready"
+        query = request.args.get("q", "").strip()[:200]
+        current = GuardConfig.from_file(str(resolved_config))
+        return render_template(
+            "knowledge_answers.html",
+            items=store.knowledge_answers(selected_status, query=query),
+            counts=store.knowledge_answer_counts(),
+            selected_status=selected_status,
+            query=query,
+            knowledge_settings=current.knowledge_base,
+            knowledge_connected=(
+                current.knowledge_base.enabled
+                and current.knowledge_base.cli_path.is_file()
+            ),
+            writes_enabled=official_writes_enabled(),
+        )
+
+    @app.post("/knowledge-answers/<int:row_id>/publish")
+    @login_required
+    def publish_knowledge_answer(row_id: int):
+        selected_status = request.form.get("status", "ready")
+        redirect_url = url_for("knowledge_answers", status=selected_status)
+        if not official_writes_enabled():
+            flash("频道回复功能尚未开启。", "error")
+            return redirect(redirect_url)
+        claimed = False
+        try:
+            item = store.claim_knowledge_publish(row_id, request.form.get("draft", ""))
+            claimed = True
+            client = cli_factory()
+            client.comment_feed(
+                item["guild_id"],
+                item["channel_id"],
+                item["feed_id"],
+                item["feed_create_time"],
+                item["draft"],
+            )
+            store.record_knowledge_publish_result(
+                row_id,
+                success=True,
+                actor="admin",
+                remote_ip=remote_ip(),
+            )
+            flash("回复已发布到原帖。", "success")
+        except (TencentCliError, ValueError, OSError) as exc:
+            if claimed:
+                store.record_knowledge_publish_result(
+                    row_id,
+                    success=False,
+                    error=str(exc),
+                    actor="admin",
+                    remote_ip=remote_ip(),
+                )
+            flash(_public_operation_error(exc), "error")
+        return redirect(redirect_url)
 
     @app.post("/contents/<guild_id>/<feed_id>/edit")
     @login_required

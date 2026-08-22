@@ -102,6 +102,16 @@ class AIReviewSettings:
 
 
 @dataclass(frozen=True)
+class KnowledgeBaseSettings:
+    enabled: bool = False
+    cli_path: Path = Path("./knowledge/workbuddy-kb")
+    top_k: int = 5
+    timeout_seconds: int = 20
+    answer_model: str = "hy3"
+    max_answer_chars: int = 1200
+
+
+@dataclass(frozen=True)
 class GuardConfig:
     database_path: Path
     delete_mode: str = "dry_run"
@@ -119,6 +129,7 @@ class GuardConfig:
     content_policies: Tuple[ContentPolicy, ...] = field(default_factory=tuple)
     moderation: ModerationSettings = field(default_factory=ModerationSettings)
     ai_review: AIReviewSettings = field(default_factory=AIReviewSettings)
+    knowledge_base: KnowledgeBaseSettings = field(default_factory=KnowledgeBaseSettings)
 
     @classmethod
     def from_file(cls, path: str) -> "GuardConfig":
@@ -187,6 +198,9 @@ class GuardConfig:
         content_policies = _parse_content_policies(raw.get("content_policies", []))
         moderation = _parse_moderation(raw.get("moderation", {}))
         ai_review = _parse_ai_review(raw.get("ai_review", {}))
+        knowledge_base = _parse_knowledge_base(
+            raw.get("knowledge_base", {}), config_path.parent
+        )
 
         return cls(
             database_path=db_path,
@@ -207,6 +221,7 @@ class GuardConfig:
             content_policies=content_policies,
             moderation=moderation,
             ai_review=ai_review,
+            knowledge_base=knowledge_base,
         )
 
 
@@ -438,6 +453,27 @@ def _parse_ai_review(values: object) -> AIReviewSettings:
         minimum_allow_confidence=max(0.0, min(confidence, 1.0)),
         include_images=bool(values.get("include_images", True)),
         max_images=max(0, min(int(values.get("max_images", 3)), 5)),
+    )
+
+
+def _parse_knowledge_base(
+    values: object, config_directory: Path
+) -> KnowledgeBaseSettings:
+    if not isinstance(values, Mapping):
+        raise ValueError("knowledge_base 必须是对象")
+    cli_path = Path(str(values.get("cli_path", "./knowledge/workbuddy-kb"))).expanduser()
+    if not cli_path.is_absolute():
+        cli_path = (config_directory / cli_path).resolve()
+    answer_model = str(values.get("answer_model", "hy3")).strip()
+    if not answer_model or len(answer_model) > 100:
+        raise ValueError("knowledge_base.answer_model 无效")
+    return KnowledgeBaseSettings(
+        enabled=bool(values.get("enabled", False)),
+        cli_path=cli_path,
+        top_k=max(1, min(int(values.get("top_k", 5)), 10)),
+        timeout_seconds=max(3, min(int(values.get("timeout_seconds", 20)), 120)),
+        answer_model=answer_model,
+        max_answer_chars=max(200, min(int(values.get("max_answer_chars", 1200)), 4000)),
     )
 
 

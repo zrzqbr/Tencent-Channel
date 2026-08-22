@@ -1,0 +1,95 @@
+{% extends "base.html" %}
+{% block title %}知识问答 · 腾讯频道治理{% endblock %}
+{% block heading %}知识问答{% endblock %}
+{% block page_intro %}<p class="page-subtitle">用 WorkBuddy 官方资料准备回复，由管理员确认后发布</p>{% endblock %}
+{% block topbar_extra %}
+<span class="knowledge-connection {{ 'connected' if knowledge_connected else 'disabled' }}"><i class="ri-book-open-line" aria-hidden="true"></i>{{ '官方知识库已连接' if knowledge_connected else '官方知识库未连接' }}</span>
+{% endblock %}
+{% block content %}
+<section class="knowledge-flow" aria-label="知识问答流程">
+  <div><i class="ri-radar-line" aria-hidden="true"></i><span><strong>巡检发现问题</strong><small>只处理问答与交流类内容</small></span></div>
+  <i class="ri-arrow-right-line" aria-hidden="true"></i>
+  <div><i class="ri-book-2-line" aria-hidden="true"></i><span><strong>查找官方依据</strong><small>资料不足时停止生成</small></span></div>
+  <i class="ri-arrow-right-line" aria-hidden="true"></i>
+  <div><i class="ri-edit-2-line" aria-hidden="true"></i><span><strong>管理员确认</strong><small>可修改草稿和核对来源</small></span></div>
+  <i class="ri-arrow-right-line" aria-hidden="true"></i>
+  <div><i class="ri-send-plane-line" aria-hidden="true"></i><span><strong>发布到原帖</strong><small>不会自动回复</small></span></div>
+</section>
+
+{% if not knowledge_connected %}
+<section class="knowledge-notice"><i class="ri-information-line" aria-hidden="true"></i><div><strong>知识库接入尚未开启</strong><p>开启后，下一次手动巡检会自动为问答内容查找官方依据并准备回复草稿。</p></div></section>
+{% endif %}
+
+<nav class="knowledge-tabs" aria-label="回复状态">
+  <a class="{{ 'active' if selected_status == 'ready' }}" href="{{ url_for('knowledge_answers', status='ready') }}"><span>可以回复</span><b>{{ counts.ready }}</b></a>
+  <a class="{{ 'active' if selected_status == 'review' }}" href="{{ url_for('knowledge_answers', status='review') }}"><span>需要核对</span><b>{{ counts.review }}</b></a>
+  <a class="{{ 'active' if selected_status == 'unavailable' }}" href="{{ url_for('knowledge_answers', status='unavailable') }}"><span>暂无资料</span><b>{{ counts.unavailable }}</b></a>
+  <a class="{{ 'active' if selected_status == 'published' }}" href="{{ url_for('knowledge_answers', status='published') }}"><span>已回复</span><b>{{ counts.published }}</b></a>
+  <a class="{{ 'active' if selected_status == 'failed' }}" href="{{ url_for('knowledge_answers', status='failed') }}"><span>回复失败</span><b>{{ counts.failed }}</b></a>
+</nav>
+
+<form class="knowledge-search" method="get" action="{{ url_for('knowledge_answers') }}">
+  <input type="hidden" name="status" value="{{ selected_status }}">
+  <label><i class="ri-search-line" aria-hidden="true"></i><input type="search" name="q" value="{{ query }}" placeholder="搜索问题或回复内容" aria-label="搜索问题或回复内容"></label>
+  <button class="secondary-button compact" type="submit">搜索</button>
+</form>
+
+<section class="knowledge-list" aria-label="知识问答列表">
+  {% for item in items %}
+  <article class="knowledge-item status-{{ item.knowledge_status }}">
+    <header>
+      <div>
+        <span class="knowledge-status">
+          {% if item.reply_status == 'published' %}已回复
+          {% elif item.reply_status == 'failed' %}回复失败
+          {% elif item.knowledge_status == 'ready' and item.generation_status == 'completed' %}可以回复
+          {% elif item.knowledge_status == 'unavailable' %}官方资料暂未覆盖
+          {% else %}需要管理员核对{% endif %}
+        </span>
+        <h2>{{ item.title or item.body|striptags|truncate(80) or '未命名问题' }}</h2>
+      </div>
+      <time>{{ item.updated_at|cn_time }}</time>
+    </header>
+    <div class="knowledge-meta">
+      <span><i class="ri-community-line" aria-hidden="true"></i>{{ item.guild_name or item.guild_id }}</span>
+      <span><i class="ri-layout-grid-line" aria-hidden="true"></i>{{ item.channel_name }}</span>
+      {% if item.share_url %}<a href="{{ item.share_url }}" target="_blank" rel="noopener"><i class="ri-external-link-line" aria-hidden="true"></i>打开原帖</a>{% endif %}
+    </div>
+    <div class="knowledge-question"><span>用户的问题</span><p>{{ item.body|striptags|truncate(500) or item.title }}</p></div>
+
+    {% if item.knowledge_status == 'ready' and item.generation_status == 'completed' %}
+    <form class="knowledge-reply-form" action="{{ url_for('publish_knowledge_answer', row_id=item.id) }}" method="post">
+      <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
+      <input type="hidden" name="status" value="{{ selected_status }}">
+      <label for="draft-{{ item.id }}">回复草稿</label>
+      <textarea id="draft-{{ item.id }}" name="draft" rows="7" maxlength="5000" required>{{ item.draft }}</textarea>
+      <div class="knowledge-publish-row">
+        <span><i class="ri-shield-check-line" aria-hidden="true"></i>发布时会保留至少一条官方来源</span>
+        {% if item.reply_status == 'published' %}<strong class="published-label"><i class="ri-checkbox-circle-line" aria-hidden="true"></i>已发布</strong>
+        {% else %}<button class="primary-button" type="submit" {{ 'disabled' if not writes_enabled }}><i class="ri-send-plane-line" aria-hidden="true"></i>发布回复</button>{% endif %}
+      </div>
+      {% if not writes_enabled %}<p class="knowledge-inline-error">频道回复功能尚未开启，当前可以核对草稿，但不能发布。</p>{% endif %}
+    </form>
+    {% elif item.knowledge_status == 'unavailable' %}
+    <div class="knowledge-decision unavailable"><i class="ri-book-search-line" aria-hidden="true"></i><div><strong>不要直接回复</strong><p>现有官方资料没有覆盖这个问题，系统没有让 AI 猜答案。</p></div></div>
+    {% elif item.generation_status == 'failed' %}
+    <div class="knowledge-decision review"><i class="ri-refresh-line" aria-hidden="true"></i><div><strong>草稿没有生成成功</strong><p>官方依据已找到，但回复服务暂时不可用。请等待下次巡检重试。</p></div></div>
+    {% else %}
+    <div class="knowledge-decision review"><i class="ri-user-search-line" aria-hidden="true"></i><div><strong>先由管理员核对</strong><p>找到了相关资料，但证据不足以直接回答。页面不会提供可发布按钮。</p></div></div>
+    {% endif %}
+
+    {% if item.reply_status == 'failed' %}<div class="knowledge-inline-error"><i class="ri-error-warning-line" aria-hidden="true"></i>{{ item.reply_error|public_operation_error }}</div>{% endif %}
+
+    {% if item.sources %}
+    <details class="knowledge-sources" {{ 'open' if selected_status in ['review', 'unavailable'] }}>
+      <summary><i class="ri-links-line" aria-hidden="true"></i>查看官方依据（{{ item.sources|length }}）<i class="ri-arrow-down-s-line" aria-hidden="true"></i></summary>
+      <ul>{% for source in item.sources %}<li><a href="{{ source.url }}" target="_blank" rel="noopener">{{ source.title }}<i class="ri-external-link-line" aria-hidden="true"></i></a></li>{% endfor %}</ul>
+      {% for match in item.matches[:2] %}{% if match.passages %}<div class="knowledge-evidence"><strong>{{ match.title }}</strong>{% for passage in match.passages[:2] %}<p><span>{{ passage.heading }}</span>{{ passage.text|striptags|truncate(500) }}</p>{% endfor %}</div>{% endif %}{% endfor %}
+    </details>
+    {% endif %}
+  </article>
+  {% else %}
+  <div class="knowledge-empty"><i class="ri-inbox-2-line" aria-hidden="true"></i><h2>这里暂时没有内容</h2><p>{% if selected_status == 'ready' %}点击“立即巡检”后，符合条件的问答会出现在这里。{% else %}当前分类下没有记录。{% endif %}</p></div>
+  {% endfor %}
+</section>
+{% endblock %}

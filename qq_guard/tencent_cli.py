@@ -350,6 +350,32 @@ class TencentCliClient:
             confirmed=True,
         )
 
+    def comment_feed(
+        self,
+        guild_id: str,
+        channel_id: str,
+        feed_id: str,
+        feed_create_time: str,
+        content: str,
+    ) -> Dict[str, Any]:
+        content = str(content or "").strip()
+        if not content:
+            raise TencentCliError("回复内容不能为空")
+        return self.execute_capability(
+            "feed",
+            "do-comment",
+            {
+                "feed_id": self._feed_id(feed_id),
+                "feed_create_time": self._timestamp(feed_create_time),
+                "guild_id": self._digits(guild_id, "guild_id"),
+                "channel_id": self._digits(channel_id, "channel_id"),
+                "comment_type": 1,
+                "content": content,
+            },
+            confirmed=True,
+            dry_run=False,
+        )
+
     def _run(
         self,
         arguments: Sequence[str],

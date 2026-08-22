@@ -83,6 +83,7 @@ class TencentMonitorTests(unittest.TestCase):
         auto_delete_duplicates=False,
         policy_version="test.1",
         ai_enabled=False,
+        knowledge_enabled=False,
     ):
         self.config_path.write_text(
             json.dumps(
@@ -95,6 +96,10 @@ class TencentMonitorTests(unittest.TestCase):
                     },
                     "ai_review": {
                         "enabled": ai_enabled,
+                    },
+                    "knowledge_base": {
+                        "enabled": knowledge_enabled,
+                        "cli_path": str(Path(self.temp_dir.name) / "workbuddy-kb"),
                     },
                     "tencent_channel": {
                         "enabled": True,
@@ -434,6 +439,33 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertIn("sensitive_term_en", [reason.code for reason in finding.reasons])
         self.assertIn(finding.action, {"review", "delete_candidate"})
         self.assertEqual(api.deletions, [])
+
+    def test_qa_content_creates_knowledge_record_even_when_moderation_allows(self):
+        calls = []
+
+        class KnowledgeService:
+            def process_question(self, **values):
+                calls.append(values)
+
+        feeds = {"200": [self.feed("B_question", "u1", "请问", "积分怎么充值", 10)]}
+        api = FakeTencentApi(feeds, {"B_question": self.detail("请问", "积分怎么充值")})
+        monitor = TencentChannelMonitor(
+            self.config(knowledge_enabled=True), api, knowledge_service=KnowledgeService()
+        )
+        report = monitor.scan_once()
+        self.assertEqual(report.moderation_findings, ())
+        self.assertEqual(calls[0]["feed_id"], "B_question")
+
+    def test_non_qa_content_does_not_call_knowledge_base(self):
+        class KnowledgeService:
+            def process_question(self, **values):
+                raise AssertionError("non-QA content must not query the knowledge base")
+
+        feeds = {"202": [self.feed("B_article", "u1", "实战案例", "完整的教程和步骤" * 20, 10)]}
+        api = FakeTencentApi(feeds, {"B_article": self.detail("实战案例", "完整的教程和步骤" * 20)})
+        TencentChannelMonitor(
+            self.config(knowledge_enabled=True), api, knowledge_service=KnowledgeService()
+        ).scan_once()
 
     def test_new_policy_supersedes_old_pending_finding_for_same_feed(self):
         feeds = {

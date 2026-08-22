@@ -7,6 +7,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .knowledge_base import initialize_knowledge_schema
 from .storage import AuditStore
 
 
@@ -30,6 +31,7 @@ class AdminStore:
         self._lock = threading.RLock()
         AuditStore(self.database_path)
         self._initialize()
+        initialize_knowledge_schema(self.database_path)
 
     def dashboard(self) -> Dict[str, Any]:
         with self._connect() as connection:
@@ -252,6 +254,167 @@ class AdminStore:
                 "SELECT MAX(last_seen_at) FROM tencent_feed_cache"
             ).fetchone()
         return str(row[0] or "") if row else ""
+
+    def knowledge_answers(
+        self,
+        status: str = "ready",
+        query: str = "",
+        limit: int = 300,
+    ) -> List[Dict[str, Any]]:
+        clauses = {
+            "ready": "answer.can_answer = 1 AND answer.generation_status = 'completed' AND answer.reply_status = 'not_replied'",
+            "review": "(answer.knowledge_status IN ('review', 'error') OR answer.generation_status = 'failed') AND answer.reply_status = 'not_replied'",
+            "unavailable": "answer.knowledge_status = 'unavailable' AND answer.reply_status = 'not_replied'",
+            "published": "answer.reply_status = 'published'",
+            "failed": "answer.reply_status IN ('failed', 'publishing')",
+            "all": "1 = 1",
+        }
+        where = clauses.get(status, clauses["ready"])
+        with self._connect() as connection:
+            rows = connection.execute(
+                f"""
+                SELECT answer.*,
+                       COALESCE(
+                           json_extract(cache.detail_json, '$.share_url'),
+                           json_extract(cache.summary_json, '$.share_url'),
+                           ''
+                       ) AS share_url,
+                       COALESCE(NULLIF(cache.channel_name, ''), answer.channel_id) AS channel_name
+                FROM knowledge_answer_drafts AS answer
+                LEFT JOIN tencent_feed_cache AS cache
+                  ON cache.guild_id = answer.guild_id
+                 AND cache.feed_id = answer.feed_id
+                WHERE {where}
+                ORDER BY answer.updated_at DESC, answer.id DESC
+                LIMIT ?
+                """,
+                (max(1, min(int(limit), 1000)),),
+            ).fetchall()
+        items = [self._knowledge_answer_row(row) for row in rows]
+        normalized_query = str(query or "").strip().casefold()
+        if normalized_query:
+            items = [
+                item
+                for item in items
+                if normalized_query
+                in " ".join(
+                    str(item.get(key) or "")
+                    for key in ("title", "body", "guild_name", "channel_name", "draft")
+                ).casefold()
+            ]
+        return items
+
+    def knowledge_answer_counts(self) -> Dict[str, int]:
+        return {
+            status: len(self.knowledge_answers(status=status, limit=1000))
+            for status in ("ready", "review", "unavailable", "published", "failed")
+        }
+
+    def get_knowledge_answer(self, row_id: int) -> Dict[str, Any]:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT * FROM knowledge_answer_drafts WHERE id = ?", (int(row_id),)
+            ).fetchone()
+        if row is None:
+            raise ValueError("知识问答记录不存在")
+        return self._knowledge_answer_row(row)
+
+    def claim_knowledge_publish(self, row_id: int, draft: str) -> Dict[str, Any]:
+        draft = str(draft or "").strip()
+        if not draft:
+            raise ValueError("回复内容不能为空")
+        if len(draft) > 5000:
+            raise ValueError("回复内容过长")
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM knowledge_answer_drafts WHERE id = ?", (int(row_id),)
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ValueError("知识问答记录不存在")
+            item = self._knowledge_answer_row(row)
+            if not item["can_answer"] or item["knowledge_status"] != "ready":
+                connection.rollback()
+                raise ValueError("官方资料不足，不能发布这条回复")
+            if item["generation_status"] != "completed":
+                connection.rollback()
+                raise ValueError("回复草稿尚未生成完成")
+            if item["reply_status"] == "published":
+                connection.rollback()
+                raise ValueError("这条问题已经回复")
+            if item["reply_status"] == "publishing":
+                try:
+                    claimed_at = datetime.fromisoformat(str(item["updated_at"]))
+                except (TypeError, ValueError):
+                    claimed_at = datetime.now(timezone.utc)
+                if claimed_at.tzinfo is None:
+                    claimed_at = claimed_at.replace(tzinfo=timezone.utc)
+                if datetime.now(timezone.utc) - claimed_at < timedelta(minutes=5):
+                    connection.rollback()
+                    raise ValueError("这条回复正在发布，请稍后刷新查看")
+            draft = self._ensure_source_link(draft, item["sources"])
+            connection.execute(
+                """
+                UPDATE knowledge_answer_drafts
+                SET draft = ?, reply_status = 'publishing', reply_error = '', updated_at = ?
+                WHERE id = ?
+                """,
+                (draft, _utc_now(), int(row_id)),
+            )
+            connection.commit()
+        item["draft"] = draft
+        item["reply_status"] = "publishing"
+        return item
+
+    def record_knowledge_publish_result(
+        self,
+        row_id: int,
+        *,
+        success: bool,
+        error: str = "",
+        actor: str = "admin",
+        remote_ip: str = "",
+    ) -> None:
+        now = _utc_now()
+        with self._lock, self._connect() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT guild_id, feed_id, draft FROM knowledge_answer_drafts WHERE id = ?",
+                (int(row_id),),
+            ).fetchone()
+            if row is None:
+                connection.rollback()
+                raise ValueError("知识问答记录不存在")
+            connection.execute(
+                """
+                UPDATE knowledge_answer_drafts
+                SET reply_status = ?, reply_error = ?, replied_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (
+                    "published" if success else "failed",
+                    "" if success else str(error)[:800],
+                    now if success else None,
+                    now,
+                    int(row_id),
+                ),
+            )
+            self._insert_audit(
+                connection,
+                actor,
+                "knowledge.reply.published" if success else "knowledge.reply.failed",
+                "feed",
+                str(row["feed_id"]),
+                {
+                    "guild_id": str(row["guild_id"]),
+                    "knowledge_answer_id": int(row_id),
+                    "reply_length": len(str(row["draft"] or "")),
+                    "error": "" if success else str(error)[:500],
+                },
+                remote_ip,
+            )
+            connection.commit()
 
     def channel_catalog(self) -> List[Dict[str, str]]:
         """Return physical channels observed during content synchronization."""
@@ -1109,6 +1272,27 @@ class AdminStore:
         item["guilds"] = _json(item.pop("guilds_json", "[]"), [])
         item["classification"] = _json(item.pop("classification_json", "{}"), {})
         return item
+
+    @staticmethod
+    def _knowledge_answer_row(row: sqlite3.Row) -> Dict[str, Any]:
+        item = dict(row)
+        item["can_answer"] = bool(item.get("can_answer"))
+        item["sources"] = _json(item.pop("sources_json", "[]"), [])
+        item["matches"] = _json(item.pop("matches_json", "[]"), [])
+        return item
+
+    @staticmethod
+    def _ensure_source_link(draft: str, sources: List[Dict[str, Any]]) -> str:
+        if any(str(source.get("url") or "") in draft for source in sources):
+            return draft
+        source = next(
+            (value for value in sources if str(value.get("url") or "").startswith("https://")),
+            None,
+        )
+        if source is None:
+            raise ValueError("回复缺少可核对的官方来源")
+        title = str(source.get("title") or "官方资料").replace("[", "").replace("]", "")
+        return f"{draft.rstrip()}\n\n参考资料：[{title}]({source['url']})"
 
     @staticmethod
     def _content_row(row: sqlite3.Row) -> Dict[str, Any]:
