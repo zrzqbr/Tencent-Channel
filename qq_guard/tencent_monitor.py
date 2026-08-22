@@ -296,18 +296,24 @@ class TencentChannelMonitor:
         for settings in self.settings:
             guild_label = settings.name or settings.guild_id
             guild_names.append(guild_label)
-            feeds_by_channel, details = self._cached_guild_content(settings)
+            feeds_by_channel, details, channel_names = self._cached_guild_content(settings)
             channel_jobs = [
                 (section.display_name, channel_id)
                 for section, channel_id in settings.channels.items()
             ] + list(settings.auto_classify_channels.items())
+            configured_channel_ids = {channel_id for _name, channel_id in channel_jobs}
+            channel_jobs.extend(
+                (channel_names.get(channel_id, "其他栏目"), channel_id)
+                for channel_id in feeds_by_channel
+                if channel_id and channel_id not in configured_channel_ids
+            )
             for channel_name, channel_id in channel_jobs:
                 self._progress(
-                    10 + int(78 * completed_units / max(work_units, 1)),
+                    min(88, 10 + int(78 * completed_units / max(work_units, 1))),
                     "AI 分析内容",
                     f"正在分析 {guild_label} · {channel_name} 的文字和图片",
                 )
-                feeds = feeds_by_channel.get(channel_id, [])[: settings.scan_count]
+                feeds = feeds_by_channel.get(channel_id, [])
                 total += len(feeds)
                 channel_weekly, channel_duplicates, channel_findings = self._process_channel(
                     settings,
@@ -556,11 +562,15 @@ class TencentChannelMonitor:
     def _cached_guild_content(
         self,
         settings: TencentChannelSettings,
-    ) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+    ) -> Tuple[
+        Dict[str, List[Dict[str, Any]]],
+        Dict[str, Dict[str, Any]],
+        Dict[str, str],
+    ]:
         with sqlite3.connect(str(self.database_path)) as connection:
             rows = connection.execute(
                 """
-                SELECT channel_id, feed_id, summary_json, detail_json
+                SELECT channel_id, channel_name, feed_id, summary_json, detail_json
                 FROM tencent_feed_cache
                 WHERE guild_id = ?
                   AND deleted_at IS NULL
@@ -570,7 +580,8 @@ class TencentChannelMonitor:
             ).fetchall()
         feeds_by_channel: Dict[str, List[Dict[str, Any]]] = {}
         details: Dict[str, Dict[str, Any]] = {}
-        for channel_id, feed_id, summary_json, detail_json in rows:
+        channel_names: Dict[str, str] = {}
+        for channel_id, channel_name, feed_id, summary_json, detail_json in rows:
             try:
                 detail = dict(json.loads(detail_json))
             except (TypeError, ValueError, json.JSONDecodeError):
@@ -579,19 +590,25 @@ class TencentChannelMonitor:
                 summary = dict(json.loads(summary_json))
             except (TypeError, ValueError, json.JSONDecodeError):
                 summary = {}
-            summary.setdefault("feed_id", str(feed_id))
-            summary.setdefault("channel_id", str(channel_id))
-            summary.setdefault("title", detail.get("title") or "")
-            summary.setdefault("author_id", detail.get("author_id") or "")
-            summary.setdefault("create_time_raw", detail.get("create_time_raw") or "")
+            summary["feed_id"] = str(summary.get("feed_id") or feed_id)
+            summary["channel_id"] = str(summary.get("channel_id") or channel_id)
+            summary["title"] = summary.get("title") or detail.get("title") or ""
+            summary["author_id"] = (
+                summary.get("author_id") or detail.get("author_id") or ""
+            )
+            summary["create_time_raw"] = (
+                summary.get("create_time_raw") or detail.get("create_time_raw") or ""
+            )
             feeds_by_channel.setdefault(str(channel_id), []).append(summary)
             details[str(feed_id)] = detail
+            if str(channel_name or "").strip():
+                channel_names[str(channel_id)] = str(channel_name)
         for feeds in feeds_by_channel.values():
             feeds.sort(
                 key=lambda feed: int(feed.get("create_time_raw") or 0),
                 reverse=True,
             )
-        return feeds_by_channel, details
+        return feeds_by_channel, details, channel_names
 
     def _resolve_channel_id(
         self,

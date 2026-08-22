@@ -339,11 +339,18 @@ class TencentMonitorTests(unittest.TestCase):
         self.assertEqual(findings, 0)
 
     def test_cached_review_does_not_read_tencent_channel(self):
-        feed = self.feed("B_cached", "u1", "请问", "这是一条待分析内容", 20)
-        feed["channel_name"] = "问答与交流"
+        feeds = [
+            self.feed(f"B_cached_{index}", "u1", "请问", f"第 {index} 条待分析内容", index)
+            for index in range(1, 23)
+        ]
+        for feed in feeds:
+            feed["channel_name"] = "问答与交流"
         api = FakeGuildTencentApi(
-            {"100": [feed]},
-            {"B_cached": self.detail("请问", "这是一条待分析内容")},
+            {"100": feeds},
+            {
+                feed["feed_id"]: self.detail("请问", feed["content_snippet"])
+                for feed in feeds
+            },
         )
         monitor = TencentChannelMonitor(self.config(), api)
         monitor.sync_once(full_sync=True)
@@ -357,8 +364,28 @@ class TencentMonitorTests(unittest.TestCase):
 
         report = monitor.review_cached_once()
 
-        self.assertEqual(report.scanned_feeds, 1)
+        self.assertEqual(report.scanned_feeds, 22)
         self.assertEqual(api.deletions, [])
+
+    def test_cached_review_includes_synced_unconfigured_channels(self):
+        configured = self.feed("B_configured", "u1", "请问", "配置栏目内容", 20)
+        configured["channel_name"] = "问答与交流"
+        extra = self.feed("B_extra", "u2", "其他栏目", "未配置栏目内容", 10)
+        extra["channel_id"] = "999"
+        extra["channel_name"] = "临时栏目"
+        api = FakeGuildTencentApi(
+            {"100": [configured, extra]},
+            {
+                "B_configured": self.detail("请问", "配置栏目内容"),
+                "B_extra": self.detail("其他栏目", "未配置栏目内容"),
+            },
+        )
+        monitor = TencentChannelMonitor(self.config(), api)
+        monitor.sync_once(full_sync=True)
+
+        report = monitor.review_cached_once()
+
+        self.assertEqual(report.scanned_feeds, 2)
 
     def test_sensitive_term_is_reported_without_delete(self):
         feeds = {
