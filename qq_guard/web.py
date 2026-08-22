@@ -1187,7 +1187,7 @@ def create_app(
                         message=message,
                     ),
                 )
-                report = monitor.sync_once(full_sync=True)
+                report = monitor.sync_once()
                 summary = report.public_summary()
                 store.record_audit(
                     "admin",

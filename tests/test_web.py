@@ -1020,6 +1020,8 @@ class WebTests(unittest.TestCase):
         self.assertEqual(state["summary"]["ai_vision_reviewed"], 1)
 
     def test_content_sync_runs_separately_from_ai_review(self):
+        sync_calls = []
+
         class Report:
             def public_summary(self):
                 return {
@@ -1035,6 +1037,7 @@ class WebTests(unittest.TestCase):
                 self.progress_callback = progress_callback
 
             def sync_once(self, **kwargs):
+                sync_calls.append(kwargs)
                 self.progress_callback(60, "同步频道内容", "正在读取帖子和图片")
                 return Report()
 
@@ -1057,6 +1060,7 @@ class WebTests(unittest.TestCase):
         self.assertEqual(state["task_type"], "sync")
         self.assertEqual(state["summary"]["synced_feeds"], 12)
         self.assertIn("未执行 AI 分析", state["message"])
+        self.assertEqual(sync_calls, [{}])
 
     def test_scan_rejects_overlapping_run(self):
         response = self.login()
