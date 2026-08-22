@@ -1,0 +1,19 @@
+[Unit]
+Description=Tencent Channel Content Cache Sync
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=txa_deployer
+Group=txa_deployer
+WorkingDirectory=/srv/tencent-channel/app/current
+EnvironmentFile=/etc/tencent-channel.env
+Environment=PYTHONUNBUFFERED=1
+Environment=HOME=/srv/tencent-channel/home
+ExecStart=/srv/tencent-channel/app/venv/bin/qq-guard --config /srv/tencent-channel/shared/config.json tencent-sync
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=full
+ReadWritePaths=/srv/tencent-channel/shared /srv/tencent-channel/home

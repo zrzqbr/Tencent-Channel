@@ -1,5 +1,6 @@
 import json
 import os
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -81,6 +82,7 @@ class TencentMonitorTests(unittest.TestCase):
         delete_mode="dry_run",
         auto_delete_duplicates=False,
         policy_version="test.1",
+        ai_enabled=False,
     ):
         self.config_path.write_text(
             json.dumps(
@@ -90,6 +92,9 @@ class TencentMonitorTests(unittest.TestCase):
                     "auto_delete_duplicates": auto_delete_duplicates,
                     "moderation": {
                         "policy_version": policy_version,
+                    },
+                    "ai_review": {
+                        "enabled": ai_enabled,
                     },
                     "tencent_channel": {
                         "enabled": True,
@@ -301,6 +306,59 @@ class TencentMonitorTests(unittest.TestCase):
                 ("B_weekly", "201", "🎁每周一问"),
             ],
         )
+
+    def test_sync_only_updates_content_cache_without_calling_ai(self):
+        class FailingAI:
+            def review(self, *args, **kwargs):
+                raise AssertionError("content sync must not call AI")
+
+        feed = self.feed("B_sync", "u1", "同步测试", "图文内容", 1787410441)
+        feed["channel_name"] = "问答与交流"
+        detail = self.detail("同步测试", "图文内容")
+        detail["images"] = [{"url": "https://example.test/image.jpg"}]
+        api = FakeGuildTencentApi({"100": [feed]}, {"B_sync": detail})
+
+        report = TencentChannelMonitor(
+            self.config(ai_enabled=True),
+            api,
+            ai_client=FailingAI(),
+        ).sync_once(full_sync=True)
+
+        self.assertEqual(report.synced_feeds, 1)
+        self.assertEqual(report.new_feeds, 1)
+        self.assertEqual(api.detail_calls, [("100", "200", "B_sync")])
+        database_path = Path(self.temp_dir.name) / "audit.sqlite3"
+        with sqlite3.connect(database_path) as connection:
+            cached = connection.execute(
+                "SELECT detail_json FROM tencent_feed_cache WHERE feed_id = 'B_sync'"
+            ).fetchone()
+            findings = connection.execute(
+                "SELECT COUNT(*) FROM tencent_moderation_findings"
+            ).fetchone()[0]
+        self.assertIn("image.jpg", cached[0])
+        self.assertEqual(findings, 0)
+
+    def test_cached_review_does_not_read_tencent_channel(self):
+        feed = self.feed("B_cached", "u1", "请问", "这是一条待分析内容", 20)
+        feed["channel_name"] = "问答与交流"
+        api = FakeGuildTencentApi(
+            {"100": [feed]},
+            {"B_cached": self.detail("请问", "这是一条待分析内容")},
+        )
+        monitor = TencentChannelMonitor(self.config(), api)
+        monitor.sync_once(full_sync=True)
+
+        def unexpected_read(*args, **kwargs):
+            raise AssertionError("cached AI review must not read Tencent")
+
+        api.list_guild_feeds_incremental = unexpected_read
+        api.list_channel_feeds = unexpected_read
+        api.get_feed_detail = unexpected_read
+
+        report = monitor.review_cached_once()
+
+        self.assertEqual(report.scanned_feeds, 1)
+        self.assertEqual(api.deletions, [])
 
     def test_sensitive_term_is_reported_without_delete(self):
         feeds = {

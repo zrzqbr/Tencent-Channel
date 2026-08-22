@@ -6,13 +6,13 @@
 - 服务器公网地址：`150.158.77.134`
 - 峰会官网：`https://ruitcarch.cloud`，与频道管理后台相互独立
 
-## 当前状态（2026-08-19）
+## 当前状态（2026-08-23）
 
 - DNSPod 已添加 `tencent` 的 A 记录，指向 `150.158.77.134`，TTL 为 600 秒。
 - 独立 Nginx 站点已启用；HTTP 会跳转到同一子域名的 HTTPS，不会跳转到峰会官网。
 - Let's Encrypt HTTPS 证书已签发，有效期至 2026-11-17；Certbot 自动续期定时器和模拟续期均验证成功。
 - 密码登录管理后台已上线，由 Gunicorn 监听 `127.0.0.1:8787`，Nginx 负责 HTTPS 和反向代理。
-- 后台服务单元为 `qq-channel-admin.service`；`qq-channel-monitor.service` 默认禁用，巡检由管理员在网页点击“立即巡检”后执行。
+- 后台服务单元为 `qq-channel-admin.service`；`qq-channel-sync.timer` 每 30 分钟只同步频道内容；`qq-channel-monitor.service` 保持禁用，AI 巡检由管理员在网页点击“立即巡检”后执行。
 - 可使用 `https://tencent.ruitcarch.cloud/healthz` 检查应用状态，正常返回 JSON `{"status":"ok"}`。
 - 普通审核内容只进入管理员审批，不自动删除；严格连续重复去重可独立开启。
 - AI 使用广州站 TokenHub：Hy3 负责语义终审建议，Youtu-VITA 负责图片理解。

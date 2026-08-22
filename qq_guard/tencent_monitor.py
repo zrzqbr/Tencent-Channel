@@ -165,11 +165,33 @@ class ScanReport:
         }
 
 
+@dataclass(frozen=True)
+class SyncReport:
+    synced_feeds: int
+    started_at: str
+    finished_at: str
+    guilds: Tuple[str, ...]
+    new_feeds: int = 0
+    updated_feeds: int = 0
+    cached_feeds: int = 0
+
+    def public_summary(self) -> Dict[str, Any]:
+        return {
+            "synced_feeds": self.synced_feeds,
+            "started_at": self.started_at,
+            "finished_at": self.finished_at,
+            "guilds": list(self.guilds),
+            "new_feeds": self.new_feeds,
+            "updated_feeds": self.updated_feeds,
+            "cached_feeds": self.cached_feeds,
+        }
+
+
 class TencentChannelMonitor:
     def __init__(
         self,
         config: GuardConfig,
-        api: TencentFeedApi,
+        api: Optional[TencentFeedApi],
         ai_client: Optional[AIReviewClient] = None,
         progress_callback: Optional[Callable[[int, str, str], None]] = None,
     ) -> None:
@@ -185,7 +207,7 @@ class TencentChannelMonitor:
         self.moderation_engine = ModerationEngine(config)
         self.database_path = Path(config.database_path)
         self.database_path.parent.mkdir(parents=True, exist_ok=True)
-        self.ai_client = ai_client or AIReviewClient(config.ai_review, self.database_path)
+        self.ai_client = ai_client
         self.progress_callback = progress_callback
         self._ai_reviewed = 0
         self._ai_fallbacks = 0
@@ -195,6 +217,131 @@ class TencentChannelMonitor:
         self._updated_feeds = 0
         self._cached_feeds = 0
         self._initialize_audit()
+
+    def sync_once(self, *, full_sync: bool = False) -> SyncReport:
+        """Refresh the local content cache without running any review logic."""
+        self._progress(5, "连接频道", "正在读取频道和栏目")
+        started_at = _utc_now()
+        guild_names: List[str] = []
+        synced_feeds = 0
+        self._new_feeds = 0
+        self._updated_feeds = 0
+        self._cached_feeds = 0
+
+        for settings_index, settings in enumerate(self.settings):
+            guild_label = settings.name or settings.guild_id
+            guild_names.append(guild_label)
+            self._progress(
+                10 + int(75 * settings_index / max(len(self.settings), 1)),
+                "同步频道内容",
+                f"正在读取 {guild_label} 的帖子、文章、正文和图片",
+            )
+            guild_feeds = self._list_guild_feeds(settings, full_sync=full_sync)
+            if guild_feeds is None:
+                channel_jobs = [
+                    (section.display_name, channel_id)
+                    for section, channel_id in settings.channels.items()
+                ] + list(settings.auto_classify_channels.items())
+                for _channel_name, channel_id in channel_jobs:
+                    feeds = self._list_feeds(settings, channel_id)
+                    synced_feeds += len(feeds)
+                    details: Dict[str, Dict[str, Any]] = {}
+                    for feed in feeds:
+                        self._detail(settings, channel_id, feed, details)
+                continue
+
+            synced_feeds += len(guild_feeds)
+            details = {}
+            for feed in guild_feeds:
+                channel_id = self._resolve_channel_id(settings, feed)
+                self._store_summary(settings, channel_id, feed)
+                if channel_id:
+                    self._detail(settings, channel_id, feed, details)
+
+        report = SyncReport(
+            synced_feeds=synced_feeds,
+            started_at=started_at,
+            finished_at=_utc_now(),
+            guilds=tuple(guild_names),
+            new_feeds=self._new_feeds,
+            updated_feeds=self._updated_feeds,
+            cached_feeds=self._cached_feeds,
+        )
+        self._progress(96, "同步完成", "频道内容已更新，未执行 AI 分析")
+        return report
+
+    def review_cached_once(self) -> ScanReport:
+        """Review already-synced content without reading from Tencent."""
+        self._progress(5, "准备 AI 巡检", "正在读取后台已同步的内容")
+        started_at = _utc_now()
+        total = 0
+        weekly_missing = 0
+        findings: List[DuplicateFinding] = []
+        moderation_findings: List[ModerationFinding] = []
+        classification_counts: Dict[str, int] = {}
+        guild_names: List[str] = []
+        self._ai_reviewed = 0
+        self._ai_fallbacks = 0
+        self._ai_vision_reviewed = 0
+        self._ai_vision_fallbacks = 0
+        self._new_feeds = 0
+        self._updated_feeds = 0
+        self._cached_feeds = 0
+
+        work_units = sum(
+            len(settings.channels) + len(settings.auto_classify_channels)
+            for settings in self.settings
+        )
+        completed_units = 0
+        for settings in self.settings:
+            guild_label = settings.name or settings.guild_id
+            guild_names.append(guild_label)
+            feeds_by_channel, details = self._cached_guild_content(settings)
+            channel_jobs = [
+                (section.display_name, channel_id)
+                for section, channel_id in settings.channels.items()
+            ] + list(settings.auto_classify_channels.items())
+            for channel_name, channel_id in channel_jobs:
+                self._progress(
+                    10 + int(78 * completed_units / max(work_units, 1)),
+                    "AI 分析内容",
+                    f"正在分析 {guild_label} · {channel_name} 的文字和图片",
+                )
+                feeds = feeds_by_channel.get(channel_id, [])[: settings.scan_count]
+                total += len(feeds)
+                channel_weekly, channel_duplicates, channel_findings = self._process_channel(
+                    settings,
+                    channel_id,
+                    feeds,
+                    guild_label,
+                    classification_counts,
+                    details=dict(details),
+                    detect_duplicates=False,
+                )
+                weekly_missing += channel_weekly
+                findings.extend(channel_duplicates)
+                moderation_findings.extend(channel_findings)
+                completed_units += 1
+
+        report = ScanReport(
+            scanned_feeds=total,
+            duplicate_findings=tuple(findings),
+            weekly_missing_topic=weekly_missing,
+            started_at=started_at,
+            finished_at=_utc_now(),
+            delete_mode=self.config.delete_mode,
+            guilds=tuple(guild_names),
+            classification_counts=classification_counts,
+            moderation_findings=tuple(moderation_findings),
+            ai_reviewed=self._ai_reviewed,
+            ai_fallbacks=self._ai_fallbacks,
+            ai_vision_reviewed=self._ai_vision_reviewed,
+            ai_vision_fallbacks=self._ai_vision_fallbacks,
+            ai_model=self.config.ai_review.model if self.config.ai_review.enabled else "",
+        )
+        self._progress(95, "保存巡检结果", "正在保存 AI 分析理由和处理建议")
+        self._record_scan(report)
+        return report
 
     def scan_once(self, *, full_sync: bool = False) -> ScanReport:
         self._progress(5, "连接频道", "正在读取频道和栏目配置")
@@ -406,6 +553,46 @@ class TencentChannelMonitor:
                 ).fetchall()
         return tuple(str(row[0]) for row in rows)
 
+    def _cached_guild_content(
+        self,
+        settings: TencentChannelSettings,
+    ) -> Tuple[Dict[str, List[Dict[str, Any]]], Dict[str, Dict[str, Any]]]:
+        with sqlite3.connect(str(self.database_path)) as connection:
+            rows = connection.execute(
+                """
+                SELECT channel_id, feed_id, summary_json, detail_json
+                FROM tencent_feed_cache
+                WHERE guild_id = ?
+                  AND deleted_at IS NULL
+                  AND detail_json NOT IN ('', '{}', 'null')
+                """,
+                (settings.guild_id,),
+            ).fetchall()
+        feeds_by_channel: Dict[str, List[Dict[str, Any]]] = {}
+        details: Dict[str, Dict[str, Any]] = {}
+        for channel_id, feed_id, summary_json, detail_json in rows:
+            try:
+                detail = dict(json.loads(detail_json))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                continue
+            try:
+                summary = dict(json.loads(summary_json))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                summary = {}
+            summary.setdefault("feed_id", str(feed_id))
+            summary.setdefault("channel_id", str(channel_id))
+            summary.setdefault("title", detail.get("title") or "")
+            summary.setdefault("author_id", detail.get("author_id") or "")
+            summary.setdefault("create_time_raw", detail.get("create_time_raw") or "")
+            feeds_by_channel.setdefault(str(channel_id), []).append(summary)
+            details[str(feed_id)] = detail
+        for feeds in feeds_by_channel.values():
+            feeds.sort(
+                key=lambda feed: int(feed.get("create_time_raw") or 0),
+                reverse=True,
+            )
+        return feeds_by_channel, details
+
     def _resolve_channel_id(
         self,
         settings: TencentChannelSettings,
@@ -468,10 +655,13 @@ class TencentChannelMonitor:
         feeds: Sequence[Dict[str, Any]],
         guild_label: str,
         classification_counts: Dict[str, int],
+        *,
+        details: Optional[Dict[str, Dict[str, Any]]] = None,
+        detect_duplicates: bool = True,
     ) -> Tuple[int, List[DuplicateFinding], List[ModerationFinding]]:
         weekly_missing = 0
         moderation_findings: List[ModerationFinding] = []
-        details: Dict[str, Dict[str, Any]] = {}
+        details = details or {}
         by_section: Dict[Section, List[Dict[str, Any]]] = {}
         nearby_items: List[IncomingContent] = []
         for feed in feeds:
@@ -493,10 +683,11 @@ class TencentChannelMonitor:
             if "missing_weekly_hashtag" in classification.validation_issues:
                 weekly_missing += 1
         duplicate_findings: List[DuplicateFinding] = []
-        for section, section_feeds in by_section.items():
-            duplicate_findings.extend(
-                self._find_duplicates(settings, channel_id, section, section_feeds, details)
-            )
+        if detect_duplicates:
+            for section, section_feeds in by_section.items():
+                duplicate_findings.extend(
+                    self._find_duplicates(settings, channel_id, section, section_feeds, details)
+                )
         return weekly_missing, duplicate_findings, moderation_findings
 
     def _detail(
@@ -729,6 +920,11 @@ class TencentChannelMonitor:
         }
         if self.config.ai_review.enabled:
             try:
+                if self.ai_client is None:
+                    self.ai_client = AIReviewClient(
+                        self.config.ai_review,
+                        self.database_path,
+                    )
                 ai = self.ai_client.review(
                     item,
                     self.config.board_policies.get(channel_id),

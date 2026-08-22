@@ -11,32 +11,31 @@
 {% block page_intro %}<p class="page-subtitle">打开一条内容，看清原因后直接决定保留、调整栏目或删除</p>{% endblock %}
 {% block content %}
 {% set latest = summary.latest_scan or {} %}
-<section class="manual-scan-summary" aria-label="巡检状态">
-  <div class="manual-scan-copy"><i class="ri-cursor-line" aria-hidden="true"></i><span><strong>只在你点击后巡检</strong><small>点击后会读取频道内容，进行文字 AI 判断，并检查有图片帖子的图片。</small></span></div>
+<section class="manual-scan-summary" aria-label="AI巡检状态">
+  <div class="manual-scan-copy"><i class="ri-brain-line" aria-hidden="true"></i><span><strong>AI 巡检只在你点击后进行</strong><small>分析后台已经同步的文字和图片，不会在这一步更新频道内容。</small></span></div>
   <dl>
-    <div><dt>上次读取</dt><dd data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</dd></div>
+    <div><dt>上次分析</dt><dd data-scan-metric="scanned_feeds">{{ latest.get('scanned_feeds', 0) }}</dd></div>
     <div><dt>AI 文字判断</dt><dd data-scan-metric="ai_reviewed">{{ latest.get('ai_reviewed', 0) }}</dd></div>
     <div><dt>AI 图片检查</dt><dd data-scan-metric="ai_vision_reviewed">{{ latest.get('ai_vision_reviewed', 0) }}</dd></div>
-    <div><dt>新发现</dt><dd data-scan-metric="new_feeds">{{ latest.get('new_feeds', 0) }}</dd></div>
     <div><dt>等待处理</dt><dd>{{ summary.pending }}</dd></div>
   </dl>
-  <a href="{{ url_for('contents') }}">查看全部内容</a>
+  <a href="{{ url_for('contents') }}">同步和查看全部内容</a>
 </section>
-<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在连接腾讯频道</p><div class="scan-ai-result" data-scan-ai-result hidden><span><i class="ri-brain-line" aria-hidden="true"></i>文字 AI <b data-scan-ai-text>0</b> 条</span><span><i class="ri-image-line" aria-hidden="true"></i>图片检查 <b data-scan-ai-image>0</b> 条</span><span class="scan-ai-fallback" data-scan-ai-fallback hidden><i class="ri-error-warning-line" aria-hidden="true"></i><b data-scan-ai-fallback-count>0</b> 条需人工补充</span></div><a href="{{ url_for('contents') }}" data-scan-results hidden>查看已同步内容</a></div>
+<div class="scan-progress dashboard-progress" data-scan-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-scan-phase>准备巡检</strong><span data-scan-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-scan-track><i data-scan-bar></i></div><p data-scan-message>正在读取后台已同步的内容</p><div class="scan-ai-result" data-scan-ai-result hidden><span><i class="ri-brain-line" aria-hidden="true"></i>文字 AI <b data-scan-ai-text>0</b> 条</span><span><i class="ri-image-line" aria-hidden="true"></i>图片检查 <b data-scan-ai-image>0</b> 条</span><span class="scan-ai-fallback" data-scan-ai-fallback hidden><i class="ri-error-warning-line" aria-hidden="true"></i><b data-scan-ai-fallback-count>0</b> 条需人工补充</span></div><a href="{{ url_for('contents') }}" data-scan-results hidden>查看全部内容</a></div>
 
 <section class="task-metrics" aria-label="处理任务">
-  <a class="task-metric danger {{ 'selected' if selected_task == 'action' }}" href="{{ url_for('dashboard', task='action') }}"><i class="ri-error-warning-line" aria-hidden="true"></i><span><b>先处理这些</b><small>有风险或需要确认，按卡片里的建议直接处理</small></span><strong>{{ task_counts.action }}</strong></a>
+  <a class="task-metric danger {{ 'selected' if selected_task == 'delete' }}" href="{{ url_for('dashboard', task='delete') }}"><i class="ri-delete-bin-line" aria-hidden="true"></i><span><b>需要删帖</b><small>AI发现明确的高风险问题，建议删除帖子</small></span><strong>{{ task_counts.delete }}</strong></a>
   <a class="task-metric warning {{ 'selected' if selected_task == 'placement' }}" href="{{ url_for('dashboard', task='placement') }}"><i class="ri-drag-move-2-line" aria-hidden="true"></i><span><b>调整栏目</b><small>内容没有明显问题，只需要放到更合适的栏目</small></span><strong>{{ task_counts.placement }}</strong></a>
-  <a class="task-metric info {{ 'selected' if selected_task == 'inspect' }}" href="{{ url_for('dashboard', task='inspect') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span><b>需要核对</b><small>AI分析没有完成，需要管理员人工核对</small></span><strong>{{ task_counts.inspect }}</strong></a>
-  <a class="task-metric success {{ 'selected' if selected_task == 'clear' }}" href="{{ url_for('dashboard', task='clear') }}"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><span><b>确认保留</b><small>没有发现问题，可以直接确认保留</small></span><strong>{{ task_counts['clear'] }}</strong></a>
+  <a class="task-metric info {{ 'selected' if selected_task == 'review' }}" href="{{ url_for('dashboard', task='review') }}"><i class="ri-file-search-line" aria-hidden="true"></i><span><b>需要核对</b><small>AI发现疑点或分析未完成，需要管理员判断</small></span><strong>{{ task_counts.review }}</strong></a>
+  <a class="task-metric success {{ 'selected' if selected_task == 'allow' }}" href="{{ url_for('dashboard', task='allow') }}"><i class="ri-checkbox-circle-line" aria-hidden="true"></i><span><b>可以保留</b><small>没有发现问题，可以确认后保留</small></span><strong>{{ task_counts.allow }}</strong></a>
 </section>
 
 <section class="review-list-heading">
   <div>
-    {% if selected_task == 'action' %}<h2>先处理这些</h2><p>这些内容需要删除或人工核对，请按每张卡片的“建议下一步”处理。</p>
+    {% if selected_task == 'delete' %}<h2>需要删除的帖子</h2><p>每条内容都列出了删除原因；你也可以先打开原帖再决定。</p>
     {% elif selected_task == 'placement' %}<h2>需要调整栏目</h2><p>内容本身未必有问题，只是更适合放到其他栏目。</p>
-    {% elif selected_task == 'inspect' %}<h2>需要人工核对</h2><p>AI分析没有完成，请人工核对这条内容。</p>
-    {% else %}<h2>可以确认保留</h2><p>没有发现明确问题，确认后会从待办中移除。</p>{% endif %}
+    {% elif selected_task == 'review' %}<h2>需要人工核对</h2><p>AI发现了疑点或没有完成分析，请查看理由后作出决定。</p>
+    {% else %}<h2>可以保留</h2><p>没有发现明确问题，确认后会从待办中移除。</p>{% endif %}
   </div>
   <span>共 {{ reviews|length }} 条</span>
 </section>

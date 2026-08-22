@@ -31,7 +31,7 @@ if (scanForm) {
     percent.textContent = `${value}%`;
     bar.style.width = `${value}%`;
     track.setAttribute('aria-valuenow', String(value));
-    message.textContent = state.message || '正在处理频道内容';
+    message.textContent = state.message || '正在分析后台已同步的内容';
     progress.classList.toggle('scan-failed', state.status === 'failed');
     progress.classList.toggle('scan-completed', state.status === 'completed');
     button.disabled = state.status === 'running';
@@ -108,6 +108,103 @@ if (scanForm) {
   const savedStatusUrl = window.sessionStorage.getItem('qqGuardScanStatusUrl');
   if (existingJob) {
     poll(`/scan/status/${encodeURIComponent(existingJob)}`);
+  } else if (savedStatusUrl) {
+    poll(savedStatusUrl);
+  }
+}
+
+const syncForm = document.querySelector('[data-sync-form]');
+if (syncForm) {
+  const button = syncForm.querySelector('[data-sync-button]');
+  const progress = document.querySelector('[data-sync-progress]');
+  const phase = progress.querySelector('[data-sync-phase]');
+  const percent = progress.querySelector('[data-sync-percent]');
+  const track = progress.querySelector('[data-sync-track]');
+  const bar = progress.querySelector('[data-sync-bar]');
+  const message = progress.querySelector('[data-sync-message]');
+  const result = progress.querySelector('[data-sync-result]');
+  const syncedCount = progress.querySelector('[data-sync-count]');
+  const newCount = progress.querySelector('[data-sync-new]');
+  const results = progress.querySelector('[data-sync-results]');
+  const latestSync = document.querySelector('[data-latest-sync]');
+  let pollTimer = null;
+
+  const renderSyncState = (state) => {
+    const value = Math.max(0, Math.min(Number(state.percent || 0), 100));
+    progress.hidden = false;
+    phase.textContent = state.phase || '正在同步';
+    percent.textContent = `${value}%`;
+    bar.style.width = `${value}%`;
+    track.setAttribute('aria-valuenow', String(value));
+    message.textContent = state.message || '正在更新频道内容';
+    progress.classList.toggle('scan-failed', state.status === 'failed');
+    progress.classList.toggle('scan-completed', state.status === 'completed');
+    button.disabled = state.status === 'running';
+    button.textContent = state.status === 'running' ? '同步进行中…' : '再次同步';
+    if (state.status === 'completed') {
+      const summary = state.summary || {};
+      result.hidden = false;
+      syncedCount.textContent = String(summary.synced_feeds || 0);
+      newCount.textContent = String(summary.new_feeds || 0);
+      results.hidden = false;
+      if (state.results_url) results.href = state.results_url;
+      if (latestSync && state.finished_at) {
+        latestSync.textContent = new Intl.DateTimeFormat('zh-CN', {
+          timeZone: 'Asia/Shanghai', year: 'numeric', month: '2-digit', day: '2-digit',
+          hour: '2-digit', minute: '2-digit', hour12: false,
+        }).format(new Date(state.finished_at)).replaceAll('/', '-');
+      }
+      window.sessionStorage.removeItem('qqGuardSyncStatusUrl');
+    }
+    if (state.status === 'failed') {
+      result.hidden = true;
+      results.hidden = true;
+      window.sessionStorage.removeItem('qqGuardSyncStatusUrl');
+    }
+  };
+
+  const poll = async (statusUrl) => {
+    window.clearTimeout(pollTimer);
+    try {
+      const response = await window.fetch(statusUrl, {
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      if (!response.ok) throw new Error('无法读取同步进度');
+      const state = await response.json();
+      renderSyncState(state);
+      if (state.status === 'running') {
+        pollTimer = window.setTimeout(() => poll(statusUrl), 1000);
+      }
+    } catch (error) {
+      renderSyncState({ status: 'failed', percent: 0, phase: '进度读取失败', message: error.message });
+    }
+  };
+
+  syncForm.addEventListener('submit', async (event) => {
+    event.preventDefault();
+    button.disabled = true;
+    result.hidden = true;
+    results.hidden = true;
+    renderSyncState({ status: 'running', percent: 2, phase: '准备同步', message: '正在提交同步任务' });
+    try {
+      const response = await window.fetch(syncForm.action, {
+        method: 'POST',
+        body: new FormData(syncForm),
+        headers: { Accept: 'application/json', 'X-Requested-With': 'XMLHttpRequest' },
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.message || '同步启动失败');
+      window.sessionStorage.setItem('qqGuardSyncStatusUrl', payload.status_url);
+      poll(payload.status_url);
+    } catch (error) {
+      renderSyncState({ status: 'failed', percent: 0, phase: '无法启动同步', message: error.message });
+    }
+  });
+
+  const existingJob = syncForm.dataset.existingJob;
+  const savedStatusUrl = window.sessionStorage.getItem('qqGuardSyncStatusUrl');
+  if (existingJob) {
+    poll(`/sync/status/${encodeURIComponent(existingJob)}`);
   } else if (savedStatusUrl) {
     poll(savedStatusUrl);
   }

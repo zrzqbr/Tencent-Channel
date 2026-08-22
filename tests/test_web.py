@@ -282,7 +282,7 @@ class WebTests(unittest.TestCase):
         response = self.login()
         self.assertEqual(response.headers["X-Frame-Options"], "DENY")
         self.assertIn("default-src 'self'", response.headers["Content-Security-Policy"])
-        self.assertIn("只在你点击后巡检".encode("utf-8"), response.data)
+        self.assertIn("AI 巡检只在你点击后进行".encode("utf-8"), response.data)
         self.assertIn("今天要处理的内容".encode("utf-8"), response.data)
         self.assertIn("全部内容".encode("utf-8"), response.data)
         self.assertIn("内容审核".encode("utf-8"), response.data)
@@ -290,10 +290,11 @@ class WebTests(unittest.TestCase):
     def test_dashboard_exposes_task_queues_as_actionable_content_cards(self):
         self.insert_tencent_review()
         response = self.login()
-        self.assertIn("先处理这些".encode("utf-8"), response.data)
+        self.assertIn("需要删帖".encode("utf-8"), response.data)
         self.assertIn("调整栏目".encode("utf-8"), response.data)
         self.assertIn("需要核对".encode("utf-8"), response.data)
-        self.assertIn("确认保留".encode("utf-8"), response.data)
+        self.assertIn("可以保留".encode("utf-8"), response.data)
+        self.assertNotIn("先处理这些".encode("utf-8"), response.data)
         self.assertIn("AI分析出了什么".encode("utf-8"), response.data)
         self.assertIn("建议下一步".encode("utf-8"), response.data)
         self.assertIn("查看并处理".encode("utf-8"), response.data)
@@ -463,12 +464,12 @@ class WebTests(unittest.TestCase):
                 "csrf_token": self.csrf(response),
                 "resolution": "approved",
                 "notes": "人工确认",
-                "next": "/?task=action",
+                "next": "/?task=delete",
             },
         )
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.headers["Location"], "/?task=action")
+        self.assertEqual(response.headers["Location"], "/?task=delete")
 
     def test_post_requires_csrf(self):
         self.login()
@@ -491,7 +492,29 @@ class WebTests(unittest.TestCase):
         self.assertIn("正常帖子".encode("utf-8"), response.data)
         self.assertIn("没有发现问题".encode("utf-8"), response.data)
         self.assertIn("正文已同步".encode("utf-8"), response.data)
+        self.assertIn("内容每 30 分钟自动同步".encode("utf-8"), response.data)
+        self.assertIn(b'action="/sync"', response.data)
         self.assertNotIn("再次输入管理密码".encode("utf-8"), response.data)
+
+    def test_all_content_prefers_unix_time_over_tencent_local_time_string(self):
+        self.insert_cached_content(feed_id="feed-time", title="时间测试")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            row = connection.execute(
+                "SELECT detail_json FROM tencent_feed_cache WHERE feed_id = 'feed-time'"
+            ).fetchone()
+            detail = json.loads(row[0])
+            detail["create_time"] = "2026-08-22 22:54:01"
+            detail["create_time_raw"] = 1787410441
+            connection.execute(
+                "UPDATE tencent_feed_cache SET detail_json = ? WHERE feed_id = 'feed-time'",
+                (json.dumps(detail, ensure_ascii=False),),
+            )
+        self.login()
+
+        response = self.client.get("/contents")
+
+        self.assertIn(b"2026-08-22 22:54", response.data)
+        self.assertNotIn(b"2026-08-23 06:54", response.data)
 
     def test_cached_content_can_be_edited_directly(self):
         self.insert_cached_content()
@@ -971,7 +994,7 @@ class WebTests(unittest.TestCase):
             def __init__(self, config, client, progress_callback=None):
                 self.progress_callback = progress_callback
 
-            def scan_once(self, **kwargs):
+            def review_cached_once(self):
                 self.progress_callback(40, "规则初审", "正在检查敏感词")
                 self.progress_callback(95, "保存审核结果", "正在写入记录")
                 return Report()
@@ -995,6 +1018,45 @@ class WebTests(unittest.TestCase):
         self.assertEqual(state["percent"], 100)
         self.assertEqual(state["summary"]["scanned_feeds"], 7)
         self.assertEqual(state["summary"]["ai_vision_reviewed"], 1)
+
+    def test_content_sync_runs_separately_from_ai_review(self):
+        class Report:
+            def public_summary(self):
+                return {
+                    "synced_feeds": 12,
+                    "new_feeds": 3,
+                    "updated_feeds": 1,
+                    "cached_feeds": 8,
+                    "finished_at": "2026-08-22T14:54:01+00:00",
+                }
+
+        class Monitor:
+            def __init__(self, config, client, progress_callback=None):
+                self.progress_callback = progress_callback
+
+            def sync_once(self, **kwargs):
+                self.progress_callback(60, "同步频道内容", "正在读取帖子和图片")
+                return Report()
+
+        response = self.login()
+        with patch("qq_guard.web.TencentChannelMonitor", Monitor):
+            response = self.client.post(
+                "/sync",
+                data={"csrf_token": self.csrf(response)},
+                headers={"Accept": "application/json", "X-Requested-With": "XMLHttpRequest"},
+            )
+            self.assertEqual(response.status_code, 202)
+            status_url = response.get_json()["status_url"]
+            state = None
+            for _ in range(30):
+                state = self.client.get(status_url).get_json()
+                if state["status"] != "running":
+                    break
+                time.sleep(0.01)
+        self.assertEqual(state["status"], "completed")
+        self.assertEqual(state["task_type"], "sync")
+        self.assertEqual(state["summary"]["synced_feeds"], 12)
+        self.assertIn("未执行 AI 分析", state["message"])
 
     def test_scan_rejects_overlapping_run(self):
         response = self.login()

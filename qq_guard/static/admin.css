@@ -89,7 +89,7 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .scan-stage strong { color: #344054; font-size: 13px; white-space: nowrap; }
 .scan-stage small { margin-top: 3px; max-width: 130px; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
 .stage-arrow { color: #a7b1c0; font-size: 18px; }
-.dashboard-progress { margin-top: 10px; padding: 13px 16px; border: 1px solid #cfe0fb; border-radius: 8px; background: #f5f9ff; }
+.dashboard-progress, .sync-progress { margin-top: 10px; padding: 13px 16px; border: 1px solid #cfe0fb; border-radius: 8px; background: #f5f9ff; }
 .scan-progress[hidden] { display: none; }
 .scan-progress-head { display: flex; justify-content: space-between; color: #245ebd; font-size: 11px; }
 .scan-progress-track { height: 6px; margin-top: 8px; overflow: hidden; border-radius: 99px; background: #dfe7f2; }
@@ -105,12 +105,15 @@ button:disabled { cursor: not-allowed; opacity: .5; }
 .manual-scan-copy strong, .manual-scan-copy small { display: block; }
 .manual-scan-copy strong { color: #234b86; font-size: 15px; }
 .manual-scan-copy small { margin-top: 4px; color: #65758b; font-size: 12px; line-height: 1.5; }
-.manual-scan-summary dl { display: grid; grid-template-columns: repeat(3, minmax(70px, 1fr)); gap: 8px; margin: 0; }
+.manual-scan-summary dl { display: grid; grid-template-columns: repeat(4, minmax(70px, 1fr)); gap: 8px; margin: 0; }
 .manual-scan-summary dl div { min-width: 76px; padding: 7px 12px; border-left: 1px solid #d9e5f6; text-align: center; }
 .manual-scan-summary dt, .manual-scan-summary dd { margin: 0; }
 .manual-scan-summary dt { color: #718096; font-size: 11px; }
 .manual-scan-summary dd { margin-top: 4px; color: #245ebd; font-size: 20px; font-weight: 800; }
 .manual-scan-summary > a { color: var(--blue); font-size: 12px; font-weight: 700; white-space: nowrap; }
+.content-sync-summary { margin-bottom: 14px; }
+.content-sync-summary dl { grid-template-columns: repeat(2, minmax(110px, 1fr)); }
+.content-sync-summary dd { font-size: 15px; white-space: nowrap; }
 
 .task-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; margin-top: 14px; }
 .task-metric { min-height: 118px; display: grid; grid-template-columns: 34px minmax(0, 1fr) auto; align-items: start; gap: 10px; padding: 16px; border: 1px solid var(--line); border-radius: 8px; background: #fff; transition: border-color .16s, box-shadow .16s, transform .16s; }

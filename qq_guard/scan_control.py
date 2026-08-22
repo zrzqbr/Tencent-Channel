@@ -55,10 +55,11 @@ class ScanLock:
 class ScanStatusStore:
     """Small shared status document used by the browser progress indicator."""
 
-    def __init__(self, database_path: Path) -> None:
+    def __init__(self, database_path: Path, task_type: str = "scan") -> None:
         database_path = Path(database_path)
         database_path.parent.mkdir(parents=True, exist_ok=True)
-        self.path = database_path.parent / "tencent-scan-status.json"
+        self.task_type = "sync" if task_type == "sync" else "scan"
+        self.path = database_path.parent / f"tencent-{self.task_type}-status.json"
         self._lock = threading.Lock()
 
     def start(self, job_id: str) -> Dict[str, Any]:
@@ -66,8 +67,13 @@ class ScanStatusStore:
             "job_id": job_id,
             "status": "running",
             "percent": 3,
-            "phase": "准备巡检",
-            "message": "正在建立安全连接并读取频道配置",
+            "task_type": self.task_type,
+            "phase": "准备同步" if self.task_type == "sync" else "准备巡检",
+            "message": (
+                "正在连接腾讯频道"
+                if self.task_type == "sync"
+                else "正在读取后台已同步的内容"
+            ),
             "started_at": _utc_now(),
             "finished_at": "",
             "summary": {},
@@ -98,16 +104,26 @@ class ScanStatusStore:
 
     def complete(self, job_id: str, summary: Dict[str, Any]) -> Dict[str, Any]:
         state = self.read(job_id) or self.start(job_id)
+        if self.task_type == "sync":
+            phase = "同步完成"
+            message = (
+                f"已同步 {int(summary.get('synced_feeds') or 0)} 条内容，"
+                f"新增 {int(summary.get('new_feeds') or 0)} 条，"
+                "本次未执行 AI 分析"
+            )
+        else:
+            phase = "巡检完成"
+            message = (
+                f"已分析 {int(summary.get('scanned_feeds') or 0)} 条内容，"
+                f"完成文字 AI {int(summary.get('ai_reviewed') or 0)} 条，"
+                f"图片检查 {int(summary.get('ai_vision_reviewed') or 0)} 条"
+            )
         state.update(
             {
                 "status": "completed",
                 "percent": 100,
-                "phase": "巡检完成",
-                "message": (
-                    f"已检查 {int(summary.get('scanned_feeds') or 0)} 条内容，"
-                    f"完成文字 AI {int(summary.get('ai_reviewed') or 0)} 条，"
-                    f"图片检查 {int(summary.get('ai_vision_reviewed') or 0)} 条"
-                ),
+                "phase": phase,
+                "message": message,
                 "finished_at": _utc_now(),
                 "summary": summary,
                 "error": "",
@@ -121,7 +137,7 @@ class ScanStatusStore:
         state.update(
             {
                 "status": "failed",
-                "phase": "巡检失败",
+                "phase": "同步失败" if self.task_type == "sync" else "巡检失败",
                 "message": str(error)[:300],
                 "finished_at": _utc_now(),
                 "error": str(error)[:500],

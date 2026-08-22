@@ -47,6 +47,7 @@ def _parser() -> argparse.ArgumentParser:
     subparsers.add_parser("dashboard", help="输出可视化后台可直接使用的汇总 JSON")
 
     subparsers.add_parser("tencent-scan", help="通过腾讯官方 CLI 对真实频道执行一次巡检")
+    subparsers.add_parser("tencent-sync", help="只同步腾讯频道内容，不执行 AI 巡检")
     subparsers.add_parser("tencent-monitor", help="持续轮询腾讯频道并处理连续重复帖子")
     return parser
 
@@ -104,13 +105,25 @@ def main() -> None:
     if args.command == "moderate":
         _moderate(args, config)
         return
-    if args.command in {"tencent-scan", "tencent-monitor"}:
+    if args.command in {"tencent-scan", "tencent-sync", "tencent-monitor"}:
         monitor = TencentChannelMonitor(config, TencentCliClient())
         if args.command == "tencent-scan":
             with ScanLock(config.database_path) as acquired:
                 if not acquired:
                     raise RuntimeError("已有一轮腾讯频道巡检正在运行")
                 report = monitor.scan_once()
+            print(json.dumps(report.public_summary(), ensure_ascii=False, indent=2))
+        elif args.command == "tencent-sync":
+            with ScanLock(config.database_path) as acquired:
+                if not acquired:
+                    print(
+                        json.dumps(
+                            {"status": "skipped", "reason": "sync_or_review_running"},
+                            ensure_ascii=False,
+                        )
+                    )
+                    return
+                report = monitor.sync_once()
             print(json.dumps(report.public_summary(), ensure_ascii=False, indent=2))
         else:
             monitor.run_forever()

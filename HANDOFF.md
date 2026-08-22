@@ -1,6 +1,6 @@
 # 腾讯频道内容治理平台交接文档
 
-> 最后核对：2026-08-20（Asia/Shanghai）  
+> 最后核对：2026-08-23（Asia/Shanghai）
 > 下一位开发者或 AI 应先完整阅读本文，再阅读 README.md、docs/MODERATION_POLICY.md 与 docs/DEPLOYMENT.md。  
 > 本文不保存管理密码、QQ Token、腾讯云 API Key、会话密钥或 SSH 私钥。
 
@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.7.4（审核理由与下一步重新排版、冲突提示简化）
+- Python 包版本：0.7.5（内容同步与 AI 巡检拆分、时间修正、待办分类明确化）
 
 ## 2. 当前生产快照
 
@@ -29,6 +29,7 @@ ssh root@150.158.77.134 'readlink /srv/tencent-channel/app/current'
 | 项目 | 状态 | 位置 |
 | --- | --- | --- |
 | 管理后台 | active | qq-channel-admin.service |
+| 内容自动同步 | active / enabled | qq-channel-sync.timer |
 | 自动巡检 | inactive / disabled | qq-channel-monitor.service |
 | Nginx | active | /etc/nginx/conf.d/tencent-channel.conf |
 | 健康检查 | 正常 | https://tencent.ruitcarch.cloud/healthz |
@@ -70,7 +71,7 @@ ai_model = hy3
 delete_mode = dry_run
 ~~~
 
-巡检只在管理员点击网页“立即巡检”后运行，平时不会自动刷新以上数字。
+频道内容每 30 分钟自动同步一次，但不执行 AI。AI 巡检只在管理员点击网页“立即巡检”后运行。
 
 ## 3. 生产路径
 
@@ -119,7 +120,8 @@ guild_id: 25087321787111415
 
 ~~~text
 QQ 频道新内容
-  → 官方 CLI 读取标题、正文、作者、栏目、话题、图片和附近上下文
+  → 每 30 分钟通过官方 CLI 同步标题、正文、作者、栏目、话题和图片
+  → 管理员点击“立即巡检”后读取本地已同步内容
   → 同作者、同频道、同栏目、连续且完全一致的确定性去重
   → 敏感词、联系方式、外链、灌水和栏目规则初审
   → Youtu-VITA 提取图片事实、OCR、二维码和视觉风险
@@ -131,6 +133,14 @@ QQ 频道新内容
 ~~~
 
 ## 6. 最近完成的关键修改
+
+### 0.7.5：同步与 AI 巡检彻底拆分
+
+- “全部内容”的“立即同步”只更新腾讯频道帖子、文章、正文和图片，不执行规则审核、Hy3 或 Youtu-VITA。
+- 新增 `qq-channel-sync.timer`，每 30 分钟执行一次增量内容同步；`qq-channel-monitor.service` 继续禁用。
+- “立即巡检”只分析后台已经同步的内容，不再同时向腾讯频道拉取数据，也不在巡检阶段执行治理操作。
+- “今日处理”明确拆为“需要删帖、调整栏目、需要核对、可以保留”，删除“先处理这些”这一混合分类。
+- 全部内容优先使用腾讯 Unix 时间戳，修复北京时间字符串被重复加 8 小时的问题。
 
 ### 0.7.2：今日处理改为内容卡片
 
@@ -299,7 +309,7 @@ git rev-parse HEAD
 git status --short
 .venv/bin/python -m unittest discover -s tests -v
 git rev-parse HEAD
-ssh -o BatchMode=yes root@150.158.77.134 'systemctl is-active qq-channel-admin.service nginx; systemctl is-enabled qq-channel-monitor.service || true'
+ssh -o BatchMode=yes root@150.158.77.134 'systemctl is-active qq-channel-admin.service nginx; systemctl is-enabled qq-channel-sync.timer qq-channel-monitor.service || true'
 ~~~
 
 ### 10.2 创建不可变 release
@@ -319,11 +329,16 @@ chown -R txa_deployer:txa_deployer \"\$release_dir\"
 /srv/tencent-channel/app/venv/bin/pip install --no-deps --quiet \"\$release_dir\"
 ln -sfn \"\$release_dir\" /srv/tencent-channel/app/current.new
 mv -Tf /srv/tencent-channel/app/current.new /srv/tencent-channel/app/current
+install -m 0644 "\$release_dir/deploy/systemd/qq-channel-sync.service" /etc/systemd/system/qq-channel-sync.service
+install -m 0644 "\$release_dir/deploy/systemd/qq-channel-sync.timer" /etc/systemd/system/qq-channel-sync.timer
+systemctl daemon-reload
+systemctl enable --now qq-channel-sync.timer
 systemctl restart qq-channel-admin.service
 systemctl disable --now qq-channel-monitor.service
 sleep 3
 readlink /srv/tencent-channel/app/current
 systemctl is-active qq-channel-admin.service
+systemctl is-active qq-channel-sync.timer
 systemctl is-enabled qq-channel-monitor.service || true
 curl -fsS http://127.0.0.1:8787/healthz
 "
@@ -345,6 +360,8 @@ ssh -o BatchMode=yes root@150.158.77.134 "
 set -e
 test \"\$(readlink /srv/tencent-channel/app/current)\" = \"/srv/tencent-channel/app/releases/$release_sha\"
 systemctl is-active qq-channel-admin.service nginx
+systemctl is-active qq-channel-sync.timer
+systemctl is-enabled qq-channel-sync.timer
 systemctl is-enabled qq-channel-monitor.service || true
 curl -fsS http://127.0.0.1:8787/healthz
 sudo -u txa_deployer env HOME=/srv/tencent-channel/home tencent-channel-cli login status
@@ -354,12 +371,12 @@ journalctl -u qq-channel-admin.service --since '10 minutes ago' --no-pager | tai
 
 再用已登录网页做无破坏性验证：
 
-1. 最近巡检显示北京时间；
-2. 立即巡检有进度，完成后时间即时更新；
-3. 建议放行显示“没有发现问题 / 保留这条帖子”；
-4. 栏目错投显示目标栏目和确认移动按钮；
-5. 证据与评分默认收起；
-6. 生产验收只执行读取和巡检，不点击任何真实编辑、移动或删除按钮。
+1. 全部内容的帖子时间与腾讯频道一致，不被重复加 8 小时；
+2. 全部内容显示每 30 分钟自动同步，立即同步完成后明确显示“AI 分析 0 条”；
+3. 立即巡检只分析已同步内容，并显示文字与图片 AI 数量；
+4. 今日处理显示“需要删帖 / 调整栏目 / 需要核对 / 可以保留”；
+5. 栏目错投显示目标栏目和确认移动按钮；
+6. 生产验收只执行同步与巡检，不点击任何真实编辑、移动或删除按钮。
 
 ### 10.4 回滚
 
@@ -375,6 +392,7 @@ test -d \"\$old_dir\"
 ln -sfn \"\$old_dir\" /srv/tencent-channel/app/current.new
 mv -Tf /srv/tencent-channel/app/current.new /srv/tencent-channel/app/current
 systemctl restart qq-channel-admin.service
+systemctl disable --now qq-channel-sync.timer
 systemctl disable --now qq-channel-monitor.service
 sleep 3
 curl -fsS http://127.0.0.1:8787/healthz
@@ -547,8 +565,8 @@ admin_audit_actions = 105
 
 ### P1：巡检调度
 
-1. 自动巡检已关闭；管理员点击“立即巡检”后执行单轮全频道同步。只有明确恢复自动模式时才设置 `QQ_GUARD_AUTO_SCAN_ENABLED=true` 并启用 monitor 服务。
-2. 已使用全频道时间线和增量水位线；后续继续观察实际额度消耗和分页完整性。
+1. 自动 AI 巡检已关闭；管理员点击“立即巡检”后只分析已同步内容。只有明确恢复自动 AI 模式时才设置 `QQ_GUARD_AUTO_SCAN_ENABLED=true` 并启用 monitor 服务。
+2. `qq-channel-sync.timer` 每 30 分钟只做增量内容同步；继续观察实际额度消耗和分页完整性。
 3. 增加巡检历史页：开始、结束、耗时、内容数、AI 数、降级数和失败阶段。
 
 ### P1：数据与队列

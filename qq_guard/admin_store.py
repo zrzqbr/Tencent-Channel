@@ -243,6 +243,13 @@ class AdminStore:
             ]
         return items
 
+    def latest_content_sync(self) -> str:
+        with self._connect() as connection:
+            row = connection.execute(
+                "SELECT MAX(last_seen_at) FROM tencent_feed_cache"
+            ).fetchone()
+        return str(row[0] or "") if row else ""
+
     def get_content(self, guild_id: str, feed_id: str) -> Dict[str, Any]:
         items = self.contents(guild_id=guild_id, include_deleted=True, limit=1000)
         item = next((value for value in items if value["feed_id"] == feed_id), None)
@@ -1094,7 +1101,7 @@ class AdminStore:
             "feed_type": int(merged.get("feed_type") or 1),
             "is_markdown": bool(merged.get("is_markdown") or content_richtext.get("is_markdown")),
             "create_time_raw": str(merged.get("create_time_raw") or ""),
-            "source_created_at": str(merged.get("create_time") or merged.get("create_time_raw") or ""),
+            "source_created_at": str(merged.get("create_time_raw") or merged.get("create_time") or ""),
             "share_url": str(merged.get("share_url") or ""),
             "images": list(merged.get("images") or []),
             "reasons": reasons,

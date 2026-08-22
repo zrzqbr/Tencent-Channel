@@ -2,8 +2,14 @@
 {% block title %}全部内容 · 腾讯频道治理{% endblock %}
 {% block heading %}全部内容{% endblock %}
 {% block page_intro %}<p class="page-subtitle">这里显示已从腾讯频道同步的帖子和文章，包括没有问题的内容</p>{% endblock %}
-{% block topbar_extra %}<form action="{{ url_for('scan_now') }}" method="post"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit"><i class="ri-refresh-line" aria-hidden="true"></i>立即同步</button></form>{% endblock %}
+{% block topbar_extra %}<form action="{{ url_for('sync_now') }}" method="post" data-sync-form data-existing-job="{{ request.args.get('sync_job', '') }}"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><button class="secondary-button" type="submit" data-sync-button><i class="ri-refresh-line" aria-hidden="true"></i>立即同步</button></form>{% endblock %}
 {% block content %}
+<section class="manual-scan-summary content-sync-summary" aria-label="内容同步状态">
+  <div class="manual-scan-copy"><i class="ri-refresh-line" aria-hidden="true"></i><span><strong>内容每 30 分钟自动同步</strong><small>只更新帖子、文章、文字和图片，不执行 AI 分析。</small></span></div>
+  <dl><div><dt>最近同步</dt><dd data-latest-sync>{{ latest_sync|cn_time if latest_sync else '尚未同步' }}</dd></div><div><dt>后台收录</dt><dd data-sync-total>{{ total_items }}</dd></div></dl>
+  <a href="{{ url_for('dashboard') }}">前往 AI 巡检</a>
+</section>
+<div class="scan-progress sync-progress" data-sync-progress hidden aria-live="polite"><div class="scan-progress-head"><strong data-sync-phase>准备同步</strong><span data-sync-percent>0%</span></div><div class="scan-progress-track" role="progressbar" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0" data-sync-track><i data-sync-bar></i></div><p data-sync-message>正在连接腾讯频道</p><div class="scan-ai-result" data-sync-result hidden><span><i class="ri-download-cloud-line" aria-hidden="true"></i>本次同步 <b data-sync-count>0</b> 条</span><span><i class="ri-add-circle-line" aria-hidden="true"></i>新增 <b data-sync-new>0</b> 条</span><span><i class="ri-brain-line" aria-hidden="true"></i>AI 分析 0 条</span></div><a href="{{ url_for('contents') }}" data-sync-results hidden>刷新全部内容</a></div>
 <section class="panel filter-panel">
   <form method="get" class="filter-form">
     <label>搜索<input name="q" value="{{ query }}" placeholder="标题、正文、作者"></label>

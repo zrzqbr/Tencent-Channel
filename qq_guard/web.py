@@ -145,6 +145,7 @@ def create_app(
     editor = ConfigEditor(resolved_config)
     limiter = LoginLimiter()
     scan_status_store = ScanStatusStore(guard_config.database_path)
+    sync_status_store = ScanStatusStore(guard_config.database_path, "sync")
 
     def remote_ip() -> str:
         return str(request.remote_addr or "")[:80]
@@ -264,32 +265,32 @@ def create_app(
             queue_counts[item["ui_queue"]] += 1
 
         task_counts = {
-            "action": queue_counts["delete"] + queue_counts["review"],
+            "delete": queue_counts["delete"],
             "placement": queue_counts["placement"],
-            "inspect": queue_counts["incomplete"],
-            "clear": queue_counts["allow"],
+            "review": queue_counts["review"] + queue_counts["incomplete"],
+            "allow": queue_counts["allow"],
         }
         for item in reviews:
             item["dashboard_task"] = {
-                "delete": "action",
-                "review": "action",
+                "delete": "delete",
+                "review": "review",
                 "placement": "placement",
-                "incomplete": "inspect",
-                "allow": "clear",
+                "incomplete": "review",
+                "allow": "allow",
             }[item["ui_queue"]]
 
         selected_task = request.args.get("task", request.args.get("queue", ""))
         legacy_tasks = {
-            "delete": "action",
-            "review": "action",
-            "incomplete": "inspect",
-            "allow": "clear",
+            "action": "delete" if task_counts["delete"] else "review",
+            "inspect": "review",
+            "incomplete": "review",
+            "clear": "allow",
         }
         selected_task = legacy_tasks.get(selected_task, selected_task)
         if selected_task not in task_counts:
             selected_task = next(
-                (key for key in ("action", "placement", "inspect", "clear") if task_counts[key]),
-                "clear",
+                (key for key in ("delete", "placement", "review", "allow") if task_counts[key]),
+                "allow",
             )
         visible_reviews = [item for item in reviews if item["dashboard_task"] == selected_task]
         return render_template(
@@ -305,6 +306,7 @@ def create_app(
             config=current,
             ai_status=ai_status,
             move_targets=_configured_move_targets(current),
+            latest_sync=store.latest_content_sync(),
         )
 
     @app.get("/contents")
@@ -345,6 +347,7 @@ def create_app(
             query=query,
             channels=channels,
             move_targets=_configured_move_targets(current),
+            latest_sync=store.latest_content_sync(),
         )
 
     @app.post("/contents/<guild_id>/<feed_id>/edit")
@@ -1086,7 +1089,7 @@ def create_app(
         current = GuardConfig.from_file(str(resolved_config))
         lease = ScanLock(current.database_path)
         if not lease.acquire():
-            message = "已有一轮巡检正在运行，请等待进度完成后再试。"
+            message = "内容同步或 AI 巡检正在运行，请完成后再试。"
             if _wants_json():
                 return jsonify({"ok": False, "status": "busy", "message": message}), 409
             flash(message, "error")
@@ -1100,7 +1103,7 @@ def create_app(
             try:
                 monitor = TencentChannelMonitor(
                     current,
-                    cli_factory(),
+                    None,
                     progress_callback=lambda percent, phase, message: scan_status_store.update(
                         job_id,
                         percent=percent,
@@ -1108,7 +1111,7 @@ def create_app(
                         message=message,
                     ),
                 )
-                report = monitor.scan_once(full_sync=True)
+                report = monitor.review_cached_once()
                 summary = report.public_summary()
                 store.record_audit(
                     "admin",
@@ -1156,12 +1159,92 @@ def create_app(
         flash("巡检已开始，可在工作台查看进度。", "success")
         return redirect(url_for("dashboard", scan_job=job_id))
 
+    @app.post("/sync")
+    @login_required
+    def sync_now():
+        current = GuardConfig.from_file(str(resolved_config))
+        lease = ScanLock(current.database_path)
+        if not lease.acquire():
+            message = "内容同步或 AI 巡检正在运行，请完成后再试。"
+            if _wants_json():
+                return jsonify({"ok": False, "status": "busy", "message": message}), 409
+            flash(message, "error")
+            return redirect(url_for("contents"))
+
+        job_id = secrets.token_urlsafe(18)
+        requester_ip = remote_ip()
+        sync_status_store.start(job_id)
+
+        def run_sync() -> None:
+            try:
+                monitor = TencentChannelMonitor(
+                    current,
+                    cli_factory(),
+                    progress_callback=lambda percent, phase, message: sync_status_store.update(
+                        job_id,
+                        percent=percent,
+                        phase=phase,
+                        message=message,
+                    ),
+                )
+                report = monitor.sync_once(full_sync=True)
+                summary = report.public_summary()
+                store.record_audit(
+                    "admin",
+                    "content.sync",
+                    "tencent",
+                    "all",
+                    {"job_id": job_id, **summary},
+                    requester_ip,
+                )
+                sync_status_store.complete(job_id, summary)
+            except Exception as exc:
+                store.record_audit(
+                    "admin",
+                    "content.sync_failed",
+                    "tencent",
+                    "all",
+                    {"job_id": job_id, "error": str(exc)[:500]},
+                    requester_ip,
+                )
+                sync_status_store.fail(job_id, _public_operation_error(exc))
+            finally:
+                lease.release()
+
+        threading.Thread(
+            target=run_sync,
+            name=f"qq-guard-sync-{job_id[:8]}",
+            daemon=True,
+        ).start()
+        if _wants_json():
+            return jsonify(
+                {
+                    "ok": True,
+                    "status": "running",
+                    "job_id": job_id,
+                    "status_url": url_for("sync_status", job_id=job_id),
+                }
+            ), 202
+        flash("内容同步已开始，本次不会执行 AI 分析。", "success")
+        return redirect(url_for("contents", sync_job=job_id))
+
     @app.get("/scan/status/<job_id>")
     @login_required
     def scan_status(job_id: str):
         if not job_id or len(job_id) > 80:
             abort(404)
         state = scan_status_store.read(job_id)
+        if state is None:
+            abort(404)
+        state["results_url"] = url_for("contents")
+        return jsonify(state)
+
+    @app.get("/sync/status/<job_id>")
+    @login_required
+    def sync_status(job_id: str):
+        if not job_id or len(job_id) > 80:
+            abort(404)
+        state = sync_status_store.read(job_id)
         if state is None:
             abort(404)
         state["results_url"] = url_for("contents")
