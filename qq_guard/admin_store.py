@@ -133,7 +133,8 @@ class AdminStore:
                        'rules' AS analysis_source, 'not_requested' AS ai_status,
                        '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
                        '' AS ai_error, '' AS content_detail_json,
-                       '' AS content_summary_json
+                       '' AS content_summary_json, '' AS cached_channel_id,
+                       '' AS current_channel_name
                 FROM content_events
                 WHERE (? = '' OR review_status = ?)
                   AND (? = '' OR risk_level = ?)
@@ -156,7 +157,9 @@ class AdminStore:
                        finding.ai_status, finding.ai_model, finding.ai_confidence,
                        finding.ai_analysis_json, finding.ai_error,
                        cache.detail_json AS content_detail_json,
-                       cache.summary_json AS content_summary_json
+                       cache.summary_json AS content_summary_json,
+                       cache.channel_id AS cached_channel_id,
+                       cache.channel_name AS current_channel_name
                 FROM tencent_moderation_findings AS finding
                 LEFT JOIN tencent_feed_cache AS cache
                   ON cache.guild_id = finding.guild_id
@@ -249,6 +252,23 @@ class AdminStore:
                 "SELECT MAX(last_seen_at) FROM tencent_feed_cache"
             ).fetchone()
         return str(row[0] or "") if row else ""
+
+    def channel_catalog(self) -> List[Dict[str, str]]:
+        """Return physical channels observed during content synchronization."""
+        with self._connect() as connection:
+            rows = connection.execute(
+                """
+                SELECT guild_id,
+                       COALESCE(MAX(NULLIF(guild_name, '')), guild_id) AS guild_name,
+                       channel_id,
+                       COALESCE(MAX(NULLIF(channel_name, '')), '未命名栏目') AS channel_name
+                FROM tencent_feed_cache
+                WHERE channel_id <> ''
+                GROUP BY guild_id, channel_id
+                ORDER BY guild_name, channel_name, channel_id
+                """
+            ).fetchall()
+        return [dict(row) for row in rows]
 
     def get_content(self, guild_id: str, feed_id: str) -> Dict[str, Any]:
         items = self.contents(guild_id=guild_id, include_deleted=True, limit=1000)
@@ -399,7 +419,8 @@ class AdminStore:
                            'rules' AS analysis_source, 'not_requested' AS ai_status,
                            '' AS ai_model, NULL AS ai_confidence, '{}' AS ai_analysis_json,
                            '' AS ai_error, '' AS content_detail_json,
-                           '' AS content_summary_json
+                           '' AS content_summary_json, '' AS cached_channel_id,
+                           '' AS current_channel_name
                     FROM content_events WHERE id = ?
                     """,
                     (int(row_id),),
@@ -418,7 +439,9 @@ class AdminStore:
                            finding.ai_status, finding.ai_model, finding.ai_confidence,
                            finding.ai_analysis_json, finding.ai_error,
                            cache.detail_json AS content_detail_json,
-                           cache.summary_json AS content_summary_json
+                           cache.summary_json AS content_summary_json,
+                           cache.channel_id AS cached_channel_id,
+                           cache.channel_name AS current_channel_name
                     FROM tencent_moderation_findings AS finding
                     LEFT JOIN tencent_feed_cache AS cache
                       ON cache.guild_id = finding.guild_id
@@ -1053,6 +1076,10 @@ class AdminStore:
     def _review_row(row: sqlite3.Row, source: str) -> Dict[str, Any]:
         item = dict(row)
         item["source"] = source
+        cached_channel_id = str(item.pop("cached_channel_id", "") or "").strip()
+        current_channel_name = str(item.pop("current_channel_name", "") or "").strip()
+        if source == "tencent" and cached_channel_id:
+            item["channel_id"] = cached_channel_id
         item["reasons"] = _json(item.pop("reasons_json", "[]"), [])
         item["classification"] = _json(item.pop("classification_json", "{}"), {})
         item["media_urls"] = _json(item.pop("media_urls_json", "[]"), [])
@@ -1065,6 +1092,9 @@ class AdminStore:
             for key, value in detail.items()
             if value not in (None, "", [], {})
         })
+        item["current_channel_name"] = current_channel_name or str(
+            content.get("channel_name") or ""
+        ).strip()
         share_url = content.get("share_url") or content.get("shareUrl") or ""
         item["share_url"] = (
             str(share_url)

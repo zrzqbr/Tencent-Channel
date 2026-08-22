@@ -11,6 +11,8 @@ from unittest.mock import patch
 from werkzeug.security import generate_password_hash
 
 from qq_guard.admin_store import AdminStore
+from qq_guard.config import GuardConfig
+from qq_guard.placement import move_targets
 from qq_guard.scan_control import ScanLock
 from qq_guard.tencent_cli import TencentCliError
 from qq_guard.web import _cn_time, _plain_ai_text, create_app
@@ -326,6 +328,163 @@ class WebTests(unittest.TestCase):
             b'href="https://pd.qq.com/s/test" target="_blank"',
             response.data,
         )
+
+    def test_dashboard_distinguishes_real_channel_from_detected_content_type(self):
+        row_id = self.insert_tencent_review("feed-placement", "应该放到实用文章")
+        self.insert_cached_content("feed-placement", "应该放到实用文章")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy",
+            "guild_id": "1",
+            "channels": {"qa_discussion": "2", "practical_article": "3"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "2": {"name": "问答与交流", "expected_sections": ["qa_discussion"]},
+            "3": {"name": "实用文章", "expected_sections": ["practical_article"]},
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET section = 'practical_article', action = 'review', risk_level = 'medium',
+                    risk_score = 35, classification_json = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps({
+                        "section": "practical_article",
+                        "confidence": 0.9,
+                        "reasons": ["这是一篇完整教程"],
+                        "validation_issues": [],
+                    }, ensure_ascii=False),
+                    row_id,
+                ),
+            )
+            weekly_detail = {
+                "guild_id": "1",
+                "channel_id": "4",
+                "channel_name": "每周一问",
+                "title": "本周问题",
+            }
+            connection.execute(
+                """
+                INSERT INTO tencent_feed_cache
+                (guild_id, channel_id, feed_id, version_key, detail_json, fetched_at,
+                 guild_name, channel_name, first_seen_at, last_seen_at)
+                VALUES ('1', '4', 'weekly-feed', 'v1', ?, '2026-08-21T02:00:00+00:00',
+                        'WorkBuddy', '每周一问', '2026-08-21T02:00:00+00:00',
+                        '2026-08-21T02:00:00+00:00')
+                """,
+                (json.dumps(weekly_detail, ensure_ascii=False),),
+            )
+
+        self.login()
+        response = self.client.get("/?task=placement")
+
+        self.assertIn("当前栏目：问答与交流".encode("utf-8"), response.data)
+        self.assertIn("内容类型：实用文章".encode("utf-8"), response.data)
+        self.assertIn("调整到“实用文章”".encode("utf-8"), response.data)
+        self.assertIn(b'<option value="1:4"', response.data)
+        self.assertIn("每周一问".encode("utf-8"), response.data)
+        self.assertNotIn(b'<option value="1:2">', response.data)
+
+    def test_synced_current_channel_prevents_stale_same_channel_suggestion(self):
+        row_id = self.insert_tencent_review("feed-moved", "已经在实用文章")
+        self.insert_cached_content("feed-moved", "已经在实用文章")
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "WorkBuddy",
+            "guild_id": "1",
+            "channels": {"qa_discussion": "2", "practical_article": "3"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "2": {"name": "问答与交流", "expected_sections": ["qa_discussion"]},
+            "3": {"name": "实用文章", "expected_sections": ["practical_article"]},
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE tencent_feed_cache
+                SET channel_id = '3', channel_name = '实用文章'
+                WHERE feed_id = 'feed-moved'
+                """
+            )
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET section = 'practical_article', action = 'review', risk_level = 'medium',
+                    risk_score = 35, classification_json = ?
+                WHERE id = ?
+                """,
+                (
+                    json.dumps({
+                        "section": "practical_article",
+                        "confidence": 0.9,
+                        "reasons": ["实用文章"],
+                        "validation_issues": [],
+                    }, ensure_ascii=False),
+                    row_id,
+                ),
+            )
+
+        self.login()
+        response = self.client.get("/?task=placement")
+
+        self.assertNotIn("已经在实用文章".encode("utf-8"), response.data)
+        item = AdminStore(self.database_path).get_review("tencent", row_id)
+        self.assertEqual(item["channel_id"], "3")
+        self.assertEqual(item["current_channel_name"], "实用文章")
+
+    def test_move_rejects_current_physical_channel(self):
+        self.insert_cached_content()
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "测试频道",
+            "guild_id": "1",
+            "channels": {"qa_discussion": "2"},
+            "poll_interval_seconds": 300,
+        }]
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+        response = self.login()
+
+        response = self.client.post(
+            "/contents/1/feed-ok/move",
+            data={"csrf_token": self.csrf(response), "move_target": "1:2"},
+            follow_redirects=True,
+        )
+
+        self.assertIn("帖子已经在这个栏目".encode("utf-8"), response.data)
+        self.assertEqual(self.fake_cli.moved, [])
+
+    def test_auto_classified_physical_channel_appears_only_once(self):
+        raw = json.loads(self.config_path.read_text(encoding="utf-8"))
+        raw["tencent_channels"] = [{
+            "name": "峰会频道",
+            "guild_id": "1",
+            "channels": {"qa_discussion": "2"},
+            "auto_classify_channels": {"文章": "9"},
+            "poll_interval_seconds": 300,
+        }]
+        raw["board_policies"] = {
+            "9": {
+                "name": "文章",
+                "expected_sections": [
+                    "practical_article", "featured", "official_news", "weekly_question"
+                ],
+            }
+        }
+        self.config_path.write_text(json.dumps(raw, ensure_ascii=False), encoding="utf-8")
+
+        targets = move_targets(GuardConfig.from_file(str(self.config_path)))
+        article_targets = [target for target in targets if target["channel_id"] == "9"]
+
+        self.assertEqual(len(article_targets), 1)
+        self.assertEqual(article_targets[0]["label"], "文章")
+        self.assertEqual(article_targets[0]["key"], "1:9")
 
     def test_quality_scores_without_high_risk_evidence_do_not_suggest_delete(self):
         row_id = self.insert_tencent_review(title="哈哈哈哈哈")

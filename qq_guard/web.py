@@ -41,7 +41,7 @@ from .official_capabilities import (
     safe_audit_parameters,
     safe_payload,
 )
-from .placement import group_placement_suggestions, placement_review
+from .placement import group_placement_suggestions, move_targets, placement_review
 from .scan_control import ScanLock, ScanStatusStore
 from .tencent_cli import TencentCliClient, TencentCliError
 from .tencent_monitor import TencentChannelMonitor
@@ -258,8 +258,9 @@ def create_app(
         reviews = store.reviews(status="pending", limit=100)
         scans = store.scans(limit=5)
         current = GuardConfig.from_file(str(resolved_config))
+        channel_catalog = store.channel_catalog()
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
-        _prepare_review_items(reviews, current)
+        _prepare_review_items(reviews, current, channel_catalog)
         queue_counts = {"allow": 0, "placement": 0, "review": 0, "delete": 0, "incomplete": 0}
         for item in reviews:
             queue_counts[item["ui_queue"]] += 1
@@ -305,7 +306,7 @@ def create_app(
             scans=scans,
             config=current,
             ai_status=ai_status,
-            move_targets=_configured_move_targets(current),
+            move_targets=_configured_move_targets(current, channel_catalog),
             latest_sync=store.latest_content_sync(),
         )
 
@@ -316,6 +317,7 @@ def create_app(
         channel_id = request.args.get("channel", "")
         query = request.args.get("q", "").strip()[:200]
         current = GuardConfig.from_file(str(resolved_config))
+        channel_catalog = store.channel_catalog()
         items = store.contents(
             guild_id=guild_id,
             channel_id=channel_id,
@@ -346,7 +348,7 @@ def create_app(
             selected_channel=channel_id,
             query=query,
             channels=channels,
-            move_targets=_configured_move_targets(current),
+            move_targets=_configured_move_targets(current, channel_catalog),
             latest_sync=store.latest_content_sync(),
         )
 
@@ -412,11 +414,16 @@ def create_app(
     @login_required
     def move_content(guild_id: str, feed_id: str):
         current = GuardConfig.from_file(str(resolved_config))
-        target = _find_move_target(current, request.form.get("move_target", ""))
+        target = _find_move_target(
+            current, request.form.get("move_target", ""), store.channel_catalog()
+        )
         try:
             item = store.get_content(guild_id, feed_id)
             if target is None or target["guild_id"] != guild_id:
                 raise ValueError("请选择当前频道内的目标栏目")
+            if target["channel_id"] == item["channel_id"]:
+                raise ValueError("帖子已经在这个栏目，无需重复移动")
+            target_section = _move_result_section(current, target, item)
             cli_factory().move_feed(
                 guild_id,
                 item["channel_id"],
@@ -428,7 +435,7 @@ def create_app(
                 feed_id,
                 target["channel_id"],
                 target["label"],
-                target["section"],
+                target_section,
                 "admin",
                 remote_ip(),
             )
@@ -447,8 +454,9 @@ def create_app(
         risk = request.args.get("risk", "")
         guild_id = request.args.get("guild", "")
         current = GuardConfig.from_file(str(resolved_config))
+        channel_catalog = store.channel_catalog()
         items = store.reviews(status=status, risk_level=risk, guild_id=guild_id)
-        _prepare_review_items(items, current)
+        _prepare_review_items(items, current, channel_catalog)
         return render_template(
             "reviews.html",
             items=items,
@@ -456,7 +464,7 @@ def create_app(
             selected_risk=risk,
             selected_guild=guild_id,
             show_bulk_actions=True,
-            move_targets=_configured_move_targets(current),
+            move_targets=_configured_move_targets(current, channel_catalog),
         )
 
     @app.get("/placements")
@@ -465,7 +473,7 @@ def create_app(
         current = GuardConfig.from_file(str(resolved_config))
         selected_guild = request.args.get("guild", "")
         items = store.reviews(status="", guild_id=selected_guild, limit=500)
-        suggestions, attention = placement_review(items, current)
+        suggestions, attention = placement_review(items, current, store.channel_catalog())
         return render_template(
             "placements.html",
             groups=group_placement_suggestions(suggestions),
@@ -491,7 +499,7 @@ def create_app(
         if selected_source:
             items = [item for item in items if item.get("analysis_source") == selected_source]
         current = GuardConfig.from_file(str(resolved_config))
-        _prepare_review_items(items, current)
+        _prepare_review_items(items, current, store.channel_catalog())
         ai_status = AIReviewClient(current.ai_review, current.database_path).public_status()
         metrics = {
             "total": len(items),
@@ -529,11 +537,12 @@ def create_app(
         except ValueError:
             abort(404)
         current = GuardConfig.from_file(str(resolved_config))
-        _prepare_review_items([item], current)
+        channel_catalog = store.channel_catalog()
+        _prepare_review_items([item], current, channel_catalog)
         return render_template(
             "review_detail.html",
             item=item,
-            move_targets=_configured_move_targets(current),
+            move_targets=_configured_move_targets(current, channel_catalog),
         )
 
     @app.post("/reviews/<source>/<int:row_id>/resolve")
@@ -664,7 +673,9 @@ def create_app(
     def execute_bulk_move():
         row_ids = _selected_row_ids(request.form.getlist("review_ids"))
         current = GuardConfig.from_file(str(resolved_config))
-        target = _find_move_target(current, request.form.get("move_target", ""))
+        target = _find_move_target(
+            current, request.form.get("move_target", ""), store.channel_catalog()
+        )
         reason = "管理员在内容审核页直接调整栏目"
         return_to = safe_next(request.form.get("next", ""))
         if not row_ids or target is None:
@@ -676,6 +687,8 @@ def create_app(
                 raise ValueError("每次最多移动 20 条内容")
             if any(item["guild_id"] != target["guild_id"] for item in items):
                 raise ValueError("所选内容必须属于目标栏目的同一个频道")
+            if any(item["channel_id"] == target["channel_id"] for item in items):
+                raise ValueError("所选内容中有帖子已经在目标栏目，请重新选择")
         except ValueError as exc:
             flash(str(exc), "error")
             return redirect(return_to or url_for("reviews", status=""))
@@ -686,6 +699,7 @@ def create_app(
         stopped = False
         for row_id in row_ids:
             item = next(value for value in items if value["id"] == row_id)
+            target_section = _move_result_section(current, target, item)
             try:
                 client.move_feed(
                     item["guild_id"], item["channel_id"], target["channel_id"], item["item_id"]
@@ -694,7 +708,7 @@ def create_app(
                 error = f"{type(exc).__name__}: {exc}"[:500]
                 store.record_move_result(
                     row_id, "admin", "failed", target["channel_id"],
-                    target["section"], error, reason, remote_ip()
+                    target_section, error, reason, remote_ip()
                 )
                 failed += 1
                 if _is_rate_limit_error(exc):
@@ -703,7 +717,7 @@ def create_app(
             else:
                 store.record_move_result(
                     row_id, "admin", "moved", target["channel_id"],
-                    target["section"], "", reason, remote_ip(), target["label"]
+                    target_section, "", reason, remote_ip(), target["label"]
                 )
                 moved += 1
         untouched = len(row_ids) - moved - failed
@@ -1380,43 +1394,11 @@ def _selected_row_ids(values) -> list:
     return row_ids
 
 
-def _configured_move_targets(config: GuardConfig) -> list:
-    targets = []
-    seen = set()
-    for settings in config.tencent_channels:
-        guild_name = settings.name or settings.guild_id
-        for section, channel_id in settings.channels.items():
-            key = f"{settings.guild_id}:{channel_id}:{section.value}"
-            if key not in seen:
-                targets.append(
-                    {
-                        "key": key,
-                        "guild_id": settings.guild_id,
-                        "guild_name": guild_name,
-                        "channel_id": channel_id,
-                        "section": section.value,
-                        "label": section.display_name,
-                    }
-                )
-                seen.add(key)
-        for channel_name, channel_id in settings.auto_classify_channels.items():
-            board = config.board_policies.get(channel_id)
-            sections = board.expected_sections if board and board.expected_sections else (Section.UNCLASSIFIED,)
-            for section in sections:
-                key = f"{settings.guild_id}:{channel_id}:{section.value}"
-                if key not in seen:
-                    targets.append(
-                        {
-                            "key": key,
-                            "guild_id": settings.guild_id,
-                            "guild_name": guild_name,
-                            "channel_id": channel_id,
-                            "section": section.value,
-                            "label": f"{channel_name} · {section.display_name}",
-                        }
-                    )
-                    seen.add(key)
-    return targets
+def _configured_move_targets(
+    config: GuardConfig,
+    discovered_channels=(),
+) -> list:
+    return move_targets(config, discovered_channels)
 
 
 def _official_workflows(capabilities) -> list:
@@ -1501,12 +1483,29 @@ def _official_sources(config: GuardConfig, recent_reviews) -> Dict[str, int]:
     return {"guilds": guilds, "channels": channels, "feeds": feeds, "authors": authors}
 
 
-def _prepare_review_items(items: list, config: GuardConfig) -> None:
-    suggestions, _ = placement_review(items, config)
-    suggestion_by_id = {item["id"]: item for item in suggestions}
+def _prepare_review_items(
+    items: list,
+    config: GuardConfig,
+    discovered_channels=(),
+) -> None:
+    suggestions, _ = placement_review(items, config, discovered_channels)
+    suggestion_by_id = {
+        (item.get("source"), item["id"]): item for item in suggestions
+    }
+    channel_names = {
+        (target["guild_id"], target["channel_id"]): target["label"]
+        for target in _configured_move_targets(config, discovered_channels)
+    }
     for item in items:
         item["author_display"] = "频道成员" if item.get("author_id") else "未返回作者信息"
-        item["placement_suggestion"] = suggestion_by_id.get(item["id"])
+        item["current_channel_name"] = str(
+            channel_names.get((item.get("guild_id"), item.get("channel_id")))
+            or item.get("current_channel_name")
+            or "未识别栏目"
+        )
+        item["placement_suggestion"] = suggestion_by_id.get(
+            (item.get("source"), item["id"])
+        )
         item["has_conflict"] = (
             item.get("risk_level") in {"high", "critical"}
             and item.get("action") == "allow"
@@ -1755,9 +1754,20 @@ def _official_action_label(action: str) -> str:
 
 
 def _public_operation_error(value: Any) -> str:
-    message = str(value or "").strip().casefold()
+    original_message = str(value or "").strip()
+    message = original_message.casefold()
     if _is_missing_content_error(value):
         return "这条内容在腾讯频道中已不存在"
+    if any(
+        text in original_message
+        for text in (
+            "帖子已经在这个栏目",
+            "请选择当前频道内的目标栏目",
+            "这条内容已经删除",
+            "标题和正文不能同时为空",
+        )
+    ):
+        return original_message
     if any(token in message for token in ("retcode=153", "频率上限", "rate limit")):
         return "腾讯平台当前请求较多，本次操作未完成，请稍后再试"
     if any(token in message for token in ("invalid ai token", "retcode=8011", "100051")):
@@ -1973,7 +1983,7 @@ def _official_channel_options(config: GuardConfig, recent_reviews) -> list:
         options.append(
             {
                 "value": key[1],
-                "label": f"{item.get('guild_name') or '未命名频道'} · {SECTION_LABELS.get(item.get('section'), item.get('section'))}",
+                "label": f"{item.get('guild_name') or '未命名频道'} · {item.get('current_channel_name') or SECTION_LABELS.get(item.get('section'), item.get('section'))}",
             }
         )
     return options
@@ -2255,8 +2265,31 @@ def _reason_type(reason: Dict[str, Any]) -> str:
     return str(reason.get("category") or "其他待核对问题")
 
 
-def _find_move_target(config: GuardConfig, key: str):
-    return next((target for target in _configured_move_targets(config) if target["key"] == key), None)
+def _find_move_target(config: GuardConfig, key: str, discovered_channels=()):
+    value = str(key or "").strip()
+    return next(
+        (
+            target
+            for target in _configured_move_targets(config, discovered_channels)
+            if target["key"] == value or value.startswith(f"{target['key']}:")
+        ),
+        None,
+    )
+
+
+def _move_result_section(
+    config: GuardConfig,
+    target: Dict[str, Any],
+    item: Dict[str, Any],
+) -> str:
+    current_section = str(item.get("section") or "")
+    board = config.board_policies.get(str(target.get("channel_id") or ""))
+    if board and any(section.value == current_section for section in board.expected_sections):
+        return current_section
+    target_section = str(target.get("section") or Section.UNCLASSIFIED.value)
+    if target_section != Section.UNCLASSIFIED.value:
+        return target_section
+    return current_section or Section.UNCLASSIFIED.value
 
 
 def _delete_tencent_item(client: TencentCliClient, item: Dict[str, Any]) -> str:

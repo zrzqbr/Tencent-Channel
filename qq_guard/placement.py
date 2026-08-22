@@ -5,38 +5,85 @@ from .config import GuardConfig
 from .models import Section
 
 
+def move_targets(
+    config: GuardConfig,
+    discovered_channels: Iterable[Mapping[str, Any]] = (),
+) -> List[Dict[str, str]]:
+    """Return each physical channel once, preferring its synced display name."""
+    targets: Dict[Tuple[str, str], Dict[str, str]] = {}
+    order: List[Tuple[str, str]] = []
+
+    for settings in config.tencent_channels:
+        guild_name = settings.name or settings.guild_id
+        for section, channel_id in settings.channels.items():
+            key = (settings.guild_id, channel_id)
+            if key not in targets:
+                order.append(key)
+            targets[key] = _target(
+                settings.guild_id,
+                guild_name,
+                channel_id,
+                section,
+                section.display_name,
+            )
+        for channel_name, channel_id in settings.auto_classify_channels.items():
+            key = (settings.guild_id, channel_id)
+            if key not in targets:
+                order.append(key)
+            targets[key] = _target(
+                settings.guild_id,
+                guild_name,
+                channel_id,
+                Section.UNCLASSIFIED,
+                channel_name,
+            )
+
+    for raw_channel in discovered_channels:
+        guild_id = str(raw_channel.get("guild_id") or "").strip()
+        channel_id = str(raw_channel.get("channel_id") or "").strip()
+        if not guild_id or not channel_id:
+            continue
+        key = (guild_id, channel_id)
+        if key not in targets:
+            order.append(key)
+            targets[key] = _target(
+                guild_id,
+                str(raw_channel.get("guild_name") or guild_id),
+                channel_id,
+                Section.UNCLASSIFIED,
+                str(raw_channel.get("channel_name") or "未命名栏目"),
+            )
+            continue
+        target = targets[key]
+        synced_guild_name = str(raw_channel.get("guild_name") or "").strip()
+        synced_channel_name = str(raw_channel.get("channel_name") or "").strip()
+        if synced_guild_name:
+            target["guild_name"] = synced_guild_name
+        if synced_channel_name:
+            target["label"] = synced_channel_name
+
+    return [targets[key] for key in order]
+
+
 def placement_review(
-    items: Iterable[Mapping[str, Any]], config: GuardConfig
+    items: Iterable[Mapping[str, Any]],
+    config: GuardConfig,
+    discovered_channels: Iterable[Mapping[str, Any]] = (),
 ) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
     """Build explainable, human-approved move suggestions from stored reviews."""
     targets_by_section: Dict[Tuple[str, Section], List[Dict[str, str]]] = defaultdict(list)
     channels: Dict[Tuple[str, str], Dict[str, str]] = {}
 
-    for settings in config.tencent_channels:
-        guild_name = settings.name or settings.guild_id
-        for section, channel_id in settings.channels.items():
-            target = _target(settings.guild_id, guild_name, channel_id, section, section.display_name)
-            channels[(settings.guild_id, channel_id)] = target
-            targets_by_section[(settings.guild_id, section)].append(target)
-            board = config.board_policies.get(channel_id)
-            for accepted in board.expected_sections if board else ():
-                if accepted is not section:
-                    targets_by_section[(settings.guild_id, accepted)].append(target)
-        for channel_name, channel_id in settings.auto_classify_channels.items():
-            board = config.board_policies.get(channel_id)
-            channels[(settings.guild_id, channel_id)] = {
-                "guild_id": settings.guild_id,
-                "guild_name": guild_name,
-                "channel_id": channel_id,
-                "section": Section.UNCLASSIFIED.value,
-                "label": channel_name,
-                "key": "",
-            }
-            for section in board.expected_sections if board else ():
-                targets_by_section[(settings.guild_id, section)].append(
-                    _target(settings.guild_id, guild_name, channel_id, section,
-                            f"{channel_name} · {section.display_name}")
-                )
+    for target in move_targets(config, discovered_channels):
+        guild_id = target["guild_id"]
+        channel_id = target["channel_id"]
+        channels[(guild_id, channel_id)] = target
+        board = config.board_policies.get(channel_id)
+        accepted_sections = board.expected_sections if board else ()
+        if not accepted_sections and target["section"] != Section.UNCLASSIFIED.value:
+            accepted_sections = (Section(target["section"]),)
+        for section in accepted_sections:
+            targets_by_section[(guild_id, section)].append(target)
 
     suggestions: List[Dict[str, Any]] = []
     attention: List[Dict[str, Any]] = []
@@ -56,7 +103,7 @@ def placement_review(
         except ValueError:
             detected = Section.UNCLASSIFIED
 
-        item["current_label"] = _current_label(config, channel_id, current["label"])
+        item["current_label"] = current["label"]
         item["placement_reason"] = _reason(
             config, item, detected, issues, item["current_label"]
         )
@@ -101,18 +148,13 @@ def group_placement_suggestions(items: Iterable[Mapping[str, Any]]) -> List[Dict
 def _target(guild_id: str, guild_name: str, channel_id: str,
             section: Section, label: str) -> Dict[str, str]:
     return {
-        "key": f"{guild_id}:{channel_id}:{section.value}",
+        "key": f"{guild_id}:{channel_id}",
         "guild_id": guild_id,
         "guild_name": guild_name,
         "channel_id": channel_id,
         "section": section.value,
-        "label": label,
+        "label": label or "未命名栏目",
     }
-
-
-def _current_label(config: GuardConfig, channel_id: str, fallback: str) -> str:
-    board = config.board_policies.get(channel_id)
-    return board.name if board and board.name else fallback
 
 
 def _reason(

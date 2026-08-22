@@ -25,7 +25,7 @@
   {% for item in items %}
   <article class="panel analysis-record">
     <div class="analysis-record-head">
-      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'AI已分析' if item.analysis_source == 'ai' else '需要人工核对' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or '未命名频道' }} · {{ section_labels.get(item.section, item.section) }} · {{ item.created_at|cn_time('%Y-%m-%d %H:%M') }}</p></div>
+      <div><span class="analysis-badge {{ 'analysis-ai' if item.analysis_source == 'ai' else 'analysis-rules' }}">{{ 'AI已分析' if item.analysis_source == 'ai' else '需要人工核对' }}</span><h2>{{ item.title or item.body|truncate(60) or '无标题内容' }}</h2><p>{{ item.guild_name or '未命名频道' }} · 当前栏目：{{ item.current_channel_name }} · 内容类型：{{ section_labels.get(item.section, item.section) }} · {{ item.created_at|cn_time('%Y-%m-%d %H:%M') }}</p></div>
       <span class="decision-pill decision-{{ item.ui_queue }}">{{ item.guidance.action }}</span>
     </div>
     <section class="analysis-guidance"><div><span>AI分析出了什么</span><strong>{{ item.guidance.issue }}</strong></div><div><span>AI分析理由</span><p>{{ item.guidance.why|plain_ai_text }}</p></div><div><span>建议下一步</span><strong>{{ item.guidance.action }}</strong></div></section>

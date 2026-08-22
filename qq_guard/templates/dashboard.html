@@ -51,7 +51,8 @@
     </header>
     <div class="content-meta">
       <span><i class="ri-community-line" aria-hidden="true"></i>{{ item.guild_name or '未命名频道' }}</span>
-      <span><i class="ri-layout-grid-line" aria-hidden="true"></i>{{ section_labels.get(item.section, item.section) }}</span>
+      <span><i class="ri-layout-grid-line" aria-hidden="true"></i>当前栏目：{{ item.current_channel_name }}</span>
+      <span><i class="ri-price-tag-3-line" aria-hidden="true"></i>内容类型：{{ section_labels.get(item.section, item.section) }}</span>
       <span><i class="ri-user-3-line" aria-hidden="true"></i>{{ item.author_display }}</span>
       <span><i class="ri-time-line" aria-hidden="true"></i>{{ item.source_created_at|cn_time }}</span>
     </div>
@@ -71,7 +72,7 @@
       </form>
       {% if item.source == 'tencent' %}<form class="review-action review-move-form {{ 'recommended' if item.ui_queue == 'placement' }}" action="{{ url_for('execute_bulk_move') }}" method="post">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="next" value="{{ dashboard_return_url }}"><input type="hidden" name="review_ids" value="{{ item.id }}">
-        <select name="move_target" aria-label="选择目标栏目" required><option value="">选择栏目</option>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}" {{ 'selected' if target.key == suggested_target }}>{{ target.label }}</option>{% endfor %}</select>
+        <select name="move_target" aria-label="选择目标栏目" required><option value="">选择其他栏目</option>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}" {{ 'selected' if target.key == suggested_target }}>{{ target.label }}</option>{% endfor %}</select>
         <button class="{{ 'primary-button' if item.ui_queue == 'placement' else 'ghost-button' }} compact" type="submit"><i class="ri-drag-move-2-line" aria-hidden="true"></i>移动</button>
       </form>{% endif %}
       <a class="review-action {{ 'primary-button recommended' if item.ui_queue in ['review', 'incomplete'] else 'secondary-button' }} compact" href="{{ url_for('review_detail', source=item.source, row_id=item.id) }}"><i class="ri-file-search-line" aria-hidden="true"></i>查看并处理</a>

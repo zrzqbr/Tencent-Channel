@@ -7,11 +7,11 @@
 <div class="detail-grid">
   <section class="panel detail-main">
     <div class="detail-heading">
-      <div><span class="pill">{{ section_labels.get(item.section, item.section) }}</span><h2>{{ item.title or '无标题内容' }}</h2></div>
+      <div><span class="pill">内容类型：{{ section_labels.get(item.section, item.section) }}</span><h2>{{ item.title or '无标题内容' }}</h2></div>
       <span class="decision-pill decision-{{ item.ui_queue }}">{{ item.guidance.action }}</span>
     </div>
     <dl class="meta-grid">
-      <div><dt>所在频道</dt><dd>{{ item.guild_name or '未命名频道' }}</dd></div><div><dt>所在栏目</dt><dd>{{ section_labels.get(item.section, item.section) }}</dd></div>
+      <div><dt>所在频道</dt><dd>{{ item.guild_name or '未命名频道' }}</dd></div><div><dt>当前真实栏目</dt><dd>{{ item.current_channel_name }}</dd></div>
       <div><dt>作者</dt><dd>{{ item.author_display }}</dd></div><div><dt>发现时间</dt><dd>{{ item.created_at|cn_time('%Y-%m-%d %H:%M:%S') }}</dd></div>
       <div><dt>当前处理状态</dt><dd>{{ status_labels.get(item.review_status, item.review_status) }}</dd></div>
     </dl>
@@ -52,7 +52,7 @@
       </div>
     </form>
     {% if item.source == 'tencent' and item.placement_suggestion %}
-    <div class="action-block move-block"><h3>调整栏目</h3><p>选择目标栏目后直接移动原帖。</p><form action="{{ url_for('execute_bulk_move') }}" method="post" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ item.id }}"><label>调整到<select name="move_target" required>{% for target in move_targets %}<option value="{{ target.key }}" {{ 'selected' if target.key == item.placement_suggestion.move_target.key }}>{{ target.guild_name }} · {{ target.label }}</option>{% endfor %}</select></label><button class="primary-button full" type="submit">移动到这个栏目</button></form></div>
+    <div class="action-block move-block"><h3>调整栏目</h3><p>当前在“{{ item.current_channel_name }}”。选择同一频道内的其他栏目后直接移动原帖。</p><form action="{{ url_for('execute_bulk_move') }}" method="post" class="stack-form"><input type="hidden" name="csrf_token" value="{{ csrf_token() }}"><input type="hidden" name="review_ids" value="{{ item.id }}"><label>调整到<select name="move_target" required>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}" {{ 'selected' if target.key == item.placement_suggestion.move_target.key }}>{{ target.label }}</option>{% endfor %}</select></label><button class="primary-button full" type="submit">移动到这个栏目</button></form></div>
     {% endif %}
     {% if item.source == 'tencent' %}
     <div class="danger-zone">

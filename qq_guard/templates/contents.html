@@ -51,7 +51,7 @@
       </details>
       <form action="{{ url_for('move_content', guild_id=item.guild_id, feed_id=item.feed_id) }}" method="post" class="content-move-form">
         <input type="hidden" name="csrf_token" value="{{ csrf_token() }}">
-        <select name="move_target" aria-label="移动到栏目" required><option value="">移动到…</option>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}">{{ target.label }}</option>{% endfor %}</select>
+        <select name="move_target" aria-label="移动到栏目" required><option value="">选择其他栏目</option>{% for target in move_targets if target.guild_id == item.guild_id and target.channel_id != item.channel_id %}<option value="{{ target.key }}">{{ target.label }}</option>{% endfor %}</select>
         <button class="ghost-button compact" type="submit"><i class="ri-drag-move-2-line" aria-hidden="true"></i>移动</button>
       </form>
       {% if item.share_url %}<a class="ghost-button compact" href="{{ item.share_url }}" target="_blank" rel="noopener"><i class="ri-external-link-line" aria-hidden="true"></i>打开原帖</a>{% endif %}
