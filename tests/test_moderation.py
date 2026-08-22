@@ -6,7 +6,7 @@ from pathlib import Path
 from qq_guard.classifier import ContentClassifier
 from qq_guard.config import GuardConfig
 from qq_guard.models import IncomingContent, ItemKind, ModerationAction, Section
-from qq_guard.moderation import ModerationEngine
+from qq_guard.moderation import ModerationEngine, extract_external_links
 
 
 class ModerationTests(unittest.TestCase):
@@ -92,6 +92,31 @@ class ModerationTests(unittest.TestCase):
         codes = [reason.code for reason in assessment.reasons]
         self.assertIn("contact_information_detected", codes)
         self.assertNotEqual(assessment.action, ModerationAction.ALLOW)
+
+    def test_external_link_extraction_includes_bare_domains_but_excludes_qq(self):
+        links = extract_external_links(
+            "频道原帖 https://pd.qq.com/s/abc，资料在 docs.example.com/guide。"
+        )
+
+        self.assertEqual(links, ("docs.example.com/guide",))
+
+    def test_allowed_board_records_external_link_without_forcing_review(self):
+        _, assessment = self.assess(
+            self.item("完整教程和说明请参考 https://docs.example.com/guide，正文提供操作步骤。")
+        )
+        codes = [reason.code for reason in assessment.reasons]
+
+        self.assertIn("external_link_detected", codes)
+        self.assertNotIn("external_link_not_allowed", codes)
+
+    def test_board_that_prohibits_external_links_forces_review(self):
+        _, assessment = self.assess(
+            self.item("这个问题可以参考 example.com/answer，大家觉得呢？", channel="101")
+        )
+        codes = [reason.code for reason in assessment.reasons]
+
+        self.assertIn("external_link_not_allowed", codes)
+        self.assertEqual(assessment.action, ModerationAction.REVIEW)
 
     def test_short_repeated_content_is_flagged(self):
         _, assessment = self.assess(self.item("哈哈哈哈哈"))

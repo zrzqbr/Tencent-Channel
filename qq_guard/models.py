@@ -93,6 +93,9 @@ class AIReviewDecision:
     recommended_action: ModerationAction
     summary: str
     reasons: Tuple[PolicyReason, ...] = field(default_factory=tuple)
+    external_link_status: str = "not_found"
+    external_link_summary: str = ""
+    external_links: Tuple[str, ...] = field(default_factory=tuple)
     provider: str = "tencent_tokenhub"
     model: str = ""
     vision_model: str = ""

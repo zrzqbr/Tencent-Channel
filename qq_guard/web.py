@@ -31,7 +31,7 @@ from .classifier import ContentClassifier
 from .config import GuardConfig
 from .config_editor import ConfigEditor
 from .models import IncomingContent, ItemKind, Section
-from .moderation import ModerationEngine
+from .moderation import ModerationEngine, external_link_domain, extract_external_links
 from .official_capabilities import (
     OFFICIAL_SKILL_VERSION,
     grouped_capabilities,
@@ -86,6 +86,14 @@ VISION_STATUS_LABELS = {
     "failed": "暂时不可用，需要人工核对",
     "missing_key": "尚未连接",
     "disabled": "未启用",
+}
+EXTERNAL_LINK_STATUS_LABELS = {
+    "not_found": "未发现外链",
+    "normal": "正常资料链接",
+    "suspicious": "疑似站外引流",
+    "prohibited": "当前栏目禁止外链",
+    "uncertain": "外链用途无法确认",
+    "not_checked": "等待下次巡检",
 }
 
 
@@ -1552,6 +1560,7 @@ def _prepare_review_items(
         else:
             item["ui_summary"] = summary or first_reason or "没有发现明显问题"
         item["guidance"] = _review_guidance(item)
+        item["external_link_check"] = _external_link_check(item)
         _set_review_risk_display(item)
 
 
@@ -2184,6 +2193,57 @@ def _review_guidance(item: Dict[str, Any]) -> Dict[str, str]:
         "why": message or str((item.get("ai_analysis") or {}).get("summary") or "规则与智能判断均未发现需要处置的问题"),
         "evidence": evidence or "未命中敏感词、违禁推广、联系方式泄露或栏目硬规则",
         "score": score_detail,
+    }
+
+
+def _external_link_check(item: Dict[str, Any]) -> Dict[str, Any]:
+    analysis = item.get("ai_analysis") or {}
+    status = str(analysis.get("external_link_status") or "").strip()
+    summary = str(analysis.get("external_link_summary") or "").strip()
+    links = [
+        str(value).strip()[:500]
+        for value in (analysis.get("external_links") or [])
+        if str(value).strip()
+    ][:10]
+    if not links:
+        links = list(extract_external_links(f"{item.get('title', '')}\n{item.get('body', '')}"))
+    reasons = [reason for reason in item.get("reasons", []) if isinstance(reason, dict)]
+    prohibited_reason = next(
+        (reason for reason in reasons if reason.get("code") == "external_link_not_allowed"),
+        None,
+    )
+    valid_statuses = {"not_found", "normal", "suspicious", "prohibited", "uncertain"}
+    if status not in valid_statuses:
+        if prohibited_reason:
+            status = "prohibited"
+            summary = summary or str(prohibited_reason.get("message") or "")
+        elif links:
+            status = "uncertain"
+            summary = "正文中检测到外链，等待下次 AI 巡检判断它是资料链接还是站外引流。"
+        else:
+            status = "not_checked"
+            summary = "这条记录生成于外链专项检查上线前，下次手动巡检会补充结论。"
+    if status == "not_found":
+        summary = summary or "正文和图片中未发现需要判断的外部链接或二维码。"
+    elif status == "normal":
+        summary = summary or "链接与帖子内容相关，未发现诱导跳转或站外引流迹象。"
+    elif status == "prohibited":
+        summary = summary or "帖子含有外链，但当前栏目规则不允许发布外部链接。"
+    elif status == "suspicious":
+        summary = summary or "链接或二维码带有站外联系、推广或诱导跳转迹象。"
+    elif status == "uncertain":
+        summary = summary or "现有文字和图片无法确认外链用途，需要管理员查看原帖。"
+    domains = []
+    for value in links:
+        domain = external_link_domain(value)
+        if domain and domain not in domains:
+            domains.append(domain)
+    return {
+        "status": status,
+        "label": EXTERNAL_LINK_STATUS_LABELS[status],
+        "summary": summary,
+        "links": links,
+        "domains": domains,
     }
 
 

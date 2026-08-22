@@ -108,11 +108,11 @@ class ConfigEditor:
                     "model": model,
                     "vision_model": vision_model,
                     "prompt_version": str(
-                        ai_review.get("prompt_version", "2026-08-19.ai2")
+                        ai_review.get("prompt_version", "2026-08-23.ai4")
                     ),
                     "vision_prompt_version": str(
                         ai_review.get(
-                            "vision_prompt_version", "2026-08-19.vision1"
+                            "vision_prompt_version", "2026-08-23.vision2"
                         )
                     ),
                     "timeout_seconds": max(

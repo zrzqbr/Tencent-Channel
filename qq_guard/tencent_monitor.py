@@ -1048,6 +1048,9 @@ class TencentChannelMonitor:
                         "risk_level": ai.risk_level.value,
                         "risk_score": ai.risk_score,
                         "recommended_action": ai.recommended_action.value,
+                        "external_link_status": ai.external_link_status,
+                        "external_link_summary": ai.external_link_summary,
+                        "external_links": list(ai.external_links),
                     }
                 )
             except AIReviewUnavailable as exc:

@@ -91,8 +91,8 @@ class AIReviewSettings:
     provider: str = "tencent_tokenhub"
     model: str = "hy3"
     vision_model: str = "youtu-vita"
-    prompt_version: str = "2026-08-19.ai2"
-    vision_prompt_version: str = "2026-08-19.vision1"
+    prompt_version: str = "2026-08-23.ai4"
+    vision_prompt_version: str = "2026-08-23.vision2"
     timeout_seconds: int = 30
     vision_timeout_seconds: int = 45
     max_input_chars: int = 12000
@@ -426,9 +426,9 @@ def _parse_ai_review(values: object) -> AIReviewSettings:
         provider=provider,
         model=model,
         vision_model=vision_model,
-        prompt_version=str(values.get("prompt_version", "2026-08-19.ai2"))[:80],
+        prompt_version=str(values.get("prompt_version", "2026-08-23.ai4"))[:80],
         vision_prompt_version=str(
-            values.get("vision_prompt_version", "2026-08-19.vision1")
+            values.get("vision_prompt_version", "2026-08-23.vision2")
         )[:80],
         timeout_seconds=max(5, min(int(values.get("timeout_seconds", 30)), 120)),
         vision_timeout_seconds=max(

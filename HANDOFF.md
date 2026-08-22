@@ -12,7 +12,7 @@
 - GitHub：https://github.com/zrzqbr/Tencent-Channel
 - 主分支：main
 - 本地 remote：origin = git@github-architect-summit:zrzqbr/Tencent-Channel.git
-- Python 包版本：0.7.6（管理员可编辑指定话题与重点内容 AI 策略）
+- Python 包版本：0.7.8（AI 外链用途判断与独立外链检查结果）
 
 ## 2. 当前生产快照
 
@@ -133,6 +133,15 @@ QQ 频道新内容
 ~~~
 
 ## 6. 最近完成的关键修改
+
+### 0.7.8：外链专项检查
+
+- 正文同时识别完整网址、`www` 地址和常见裸域名；`qq.com` 及其子域名属于平台链接，不计为外链。
+- Youtu-VITA 提取图片中的网址、二维码及旁文案，Hy3 结合域名、上下文、图文相关性和栏目规则判断用途。
+- 外链结论明确拆成“未发现外链、正常资料链接、疑似站外引流、当前栏目禁止、无法确认”五种。
+- 系统不会主动打开或请求陌生链接，也不会猜测二维码或短链目标页内容。
+- 正常资料链接且栏目允许时不单独升级处理；禁止外链栏目不能被 AI 的放行结论覆盖。
+- 审核详情与判断记录新增独立“外链检查”；旧记录显示等待下次手动巡检，不伪装成已检查。
 
 ### 0.7.6：管理员可编辑 AI 审核策略
 
@@ -268,7 +277,7 @@ cp config.example.json config.json
 .venv/bin/python -m unittest discover -s tests -v
 ~~~
 
-交接前最后一次结果：87 tests OK。
+交接前最后一次结果：109 tests OK。
 
 本地 config.json 已被 .gitignore 忽略。不要把生产凭据写入测试文件。本地网页只用于界面和单元测试，不要在本机再次执行 tencent-channel-cli login，原因见第 11 节。
 

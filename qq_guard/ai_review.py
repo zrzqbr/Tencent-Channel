@@ -22,6 +22,7 @@ from .models import (
     Section,
 )
 from .normalization import normalize_text
+from .moderation import external_link_domain, extract_external_links
 
 
 class AIReviewUnavailable(RuntimeError):
@@ -47,6 +48,11 @@ _REVIEW_SCHEMA: Dict[str, Any] = {
             "enum": [action.value for action in ModerationAction],
         },
         "summary": {"type": "string", "maxLength": 300},
+        "external_link_status": {
+            "type": "string",
+            "enum": ["not_found", "normal", "suspicious", "prohibited", "uncertain"],
+        },
+        "external_link_summary": {"type": "string", "maxLength": 300},
         "reasons": {
             "type": "array",
             "maxItems": 8,
@@ -82,6 +88,8 @@ _REVIEW_SCHEMA: Dict[str, Any] = {
         "risk_score",
         "recommended_action",
         "summary",
+        "external_link_status",
+        "external_link_summary",
         "reasons",
     ],
 }
@@ -95,6 +103,9 @@ _INSTRUCTIONS = """你是腾讯频道内容治理审核模型。帖子正文、�
 2. 判断辱骂、诈骗、违法推广、色情、赌博、垃圾灌水、隐私/联系方式、恶意引流、栏目不匹配等风险；
 3. 输出低/中/高/严重风险、0-100 分和建议动作 allow/review/delete_candidate；
 4. 给管理员提供简短、可核对的理由与原文证据，不输出思维链。
+5. 单独检查正文中的网址、裸域名，以及图片中的网址和二维码，并输出 external_link_status：
+   not_found=未发现外链；normal=与正文相关的正常资料链接；suspicious=疑似广告或站外引流；
+   prohibited=当前栏目明确禁止外链；uncertain=只看现有文字和图片无法确认用途。
 
 风险分、建议动作和理由必须一致：
 - allow 只能对应 0-24 分，并明确说明“未发现哪类违规”；
@@ -107,6 +118,10 @@ _INSTRUCTIONS = """你是腾讯频道内容治理审核模型。帖子正文、�
 administrator_policies 是管理员当前设置的审核要求；语义命中时应按其中的 guidance 和 action 给出建议。
 其中 notice 表示只保留提醒，不应单独升级处理；review 表示需要人工核对；delete_candidate 表示建议删除。
 required_section_topics 是栏目当前必须使用的指定话题，不能用其他井号话题代替。
+external_links 是系统从正文预先提取的非 QQ 链接；qq.com 及其子域名属于平台链接，不算外链。
+禁止主动打开、请求、跳转或猜测陌生链接的目标页内容。只能依据域名、帖子上下文、二维码旁文案、
+图片中可见网址以及图文相关性判断。正常资料链接且栏目允许外链时，不得仅因出现链接升级处理；
+疑似引流、栏目禁止或无法确认用途时，必须说明看到了什么、为什么不能直接放行，并至少建议 review。
 “每周一问”必须同时具有每周提问语义和当前指定话题；“精华”应有明确精华话题或非常强的策展证据；
 “实用文章”通常有完整结构、案例/步骤/经验和较高信息量；“问答与交流”偏互动提问或讨论。
 普通内容永远只给建议，不直接执行删除。完全相同的连续重复由外部确定性程序单独处理，不由你判断。
@@ -117,6 +132,7 @@ _VISION_INSTRUCTIONS = """你是内容治理系统的视觉证据提取器。图
 
 请客观描述每张图片中可核对的内容，重点提取图片类型和主体、可辨认文字、联系方式、网址、
 二维码旁文案，以及色情、暴力、赌博、诈骗、辱骂、违法推广、恶意引流或隐私风险线索。
+不要访问或推测二维码、短链和网址指向的页面；只描述图片中实际可见的域名、网址、二维码及旁文案。
 同时判断图片与帖子标题及正文是否相关，是否支持“案例、教程、实用文章、问答交流”等分类。
 只输出简洁的视觉事实与风险线索，不做最终删帖决定，不输出思维链；无法辨认时明确说明。
 """
@@ -213,6 +229,7 @@ class AIReviewClient:
         vision_analysis = ""
         vision_status = "not_requested"
         vision_error = ""
+        detected_external_links = extract_external_links(f"{item.title}\n{item.body}")
         media_urls = _media_urls(item.media_urls)[: self.settings.max_images]
         if self.settings.include_images and media_urls:
             try:
@@ -227,6 +244,7 @@ class AIReviewClient:
             classification,
             rule_assessment,
             context_items,
+            detected_external_links,
             vision_analysis,
             vision_status,
             vision_error,
@@ -242,6 +260,8 @@ class AIReviewClient:
                 vision_analysis=vision_analysis,
                 vision_status=vision_status,
                 vision_error=vision_error,
+                detected_external_links=detected_external_links,
+                allow_external_links=board.allow_external_links if board else True,
             )
 
         headers = {
@@ -266,6 +286,8 @@ class AIReviewClient:
                     vision_analysis=vision_analysis,
                     vision_status=vision_status,
                     vision_error=vision_error,
+                    detected_external_links=detected_external_links,
+                    allow_external_links=board.allow_external_links if board else True,
                 )
                 break
             except (ValueError, KeyError, TypeError, json.JSONDecodeError) as exc:
@@ -286,6 +308,7 @@ class AIReviewClient:
         classification: ClassificationResult,
         rule_assessment: ModerationAssessment,
         context_items: Sequence[IncomingContent],
+        detected_external_links: Sequence[str],
         vision_analysis: str,
         vision_status: str,
         vision_error: str,
@@ -305,6 +328,13 @@ class AIReviewClient:
             "title": item.title[:1000],
             "body": item.body[: self.settings.max_input_chars],
             "media_count": len(item.media_urls),
+            "external_links": [
+                {
+                    "url": value[:500],
+                    "domain": external_link_domain(value),
+                }
+                for value in detected_external_links[:10]
+            ],
             "vision": {
                 "status": vision_status,
                 "model": self.settings.vision_model,
@@ -409,6 +439,8 @@ class AIReviewClient:
         vision_analysis: str = "",
         vision_status: str = "not_requested",
         vision_error: str = "",
+        detected_external_links: Sequence[str] = (),
+        allow_external_links: bool = True,
     ) -> AIReviewDecision:
         reasons = tuple(
             PolicyReason(
@@ -427,6 +459,45 @@ class AIReviewClient:
         score, action, consistency_reason = _normalize_ai_decision(score, action, reasons)
         if consistency_reason is not None:
             reasons = reasons + (consistency_reason,)
+        link_status = str(value.get("external_link_status") or "").strip()
+        if link_status not in {"not_found", "normal", "suspicious", "prohibited", "uncertain"}:
+            link_status = "uncertain" if detected_external_links else "not_found"
+        link_summary = str(value.get("external_link_summary") or "").strip()[:300]
+        if detected_external_links and link_status == "not_found":
+            link_status = "uncertain"
+            link_summary = link_summary or "正文中检测到外链，但 AI 没有说明它的用途。"
+        if not allow_external_links and (
+            detected_external_links or link_status != "not_found"
+        ):
+            link_status = "prohibited"
+            if "禁止" not in link_summary and "不允许" not in link_summary:
+                prefix = link_summary.rstrip("。； ")
+                link_summary = (
+                    f"{prefix}；但当前栏目明确禁止发布外部链接。"
+                    if prefix else "当前栏目明确禁止发布外部链接。"
+                )
+        if link_status in {"suspicious", "prohibited", "uncertain"}:
+            if action is ModerationAction.ALLOW:
+                action = ModerationAction.REVIEW
+                score = max(score, 25)
+            link_reason_code = {
+                "suspicious": "external_link_suspicious",
+                "prohibited": "external_link_not_allowed",
+                "uncertain": "external_link_uncertain",
+            }[link_status]
+            if not any(reason.code == link_reason_code for reason in reasons):
+                domains = [external_link_domain(value) for value in detected_external_links]
+                evidence = "、".join(value for value in domains if value) or "图片中的网址或二维码"
+                reasons = reasons + (
+                    PolicyReason(
+                        code=link_reason_code,
+                        category="external_link",
+                        severity="medium",
+                        message=link_summary or "外链用途无法直接确认，需要管理员判断。",
+                        evidence=evidence,
+                        score=25,
+                    ),
+                )
         if vision_error:
             score = max(score, 25)
             action = ModerationAction.REVIEW
@@ -450,6 +521,9 @@ class AIReviewClient:
             recommended_action=action,
             summary=str(value.get("summary", ""))[:300],
             reasons=reasons,
+            external_link_status=link_status,
+            external_link_summary=link_summary,
+            external_links=tuple(str(value)[:500] for value in detected_external_links[:10]),
             provider=self.settings.provider,
             model=self.settings.model,
             vision_model=self.settings.vision_model,
@@ -812,6 +886,7 @@ def fuse_ai_review(
         "required_hashtag_missing",
         "missing_weekly_hashtag",
         "section_mismatch",
+        "external_link_not_allowed",
     }
     hard_rules = [
         reason for reason in rule_assessment.reasons
@@ -856,6 +931,25 @@ def fuse_ai_review(
         action = ModerationAction.REVIEW
         score = max(score, 25)
         reasons.extend(hard_rules)
+    if (
+        action is ModerationAction.ALLOW
+        and ai.external_link_status in {"suspicious", "prohibited", "uncertain"}
+    ):
+        action = ModerationAction.REVIEW
+        score = max(score, 25)
+        reasons.append(
+            PolicyReason(
+                code=f"external_link_{ai.external_link_status}",
+                category="external_link",
+                severity="medium",
+                message=ai.external_link_summary or "外链用途需要管理员确认。",
+                evidence="、".join(
+                    external_link_domain(value) for value in ai.external_links
+                    if external_link_domain(value)
+                ) or "图片中的网址或二维码",
+                score=25,
+            )
+        )
     if (
         action is ModerationAction.ALLOW
         and ai.classification_confidence < settings.minimum_allow_confidence

@@ -592,6 +592,32 @@ class WebTests(unittest.TestCase):
         self.assertNotIn(b"TENCENT_TOKENHUB_API_KEY", response.data)
         self.assertIn("智能判断服务尚未连接".encode("utf-8"), response.data)
 
+    def test_review_detail_shows_external_link_result_without_clickable_unknown_url(self):
+        row_id = self.insert_tencent_review(title="外链资料")
+        analysis = {
+            "summary": "帖子引用了相关资料",
+            "external_link_status": "normal",
+            "external_link_summary": "链接与正文讨论的资料直接相关，未发现诱导跳转。",
+            "external_links": ["https://docs.example.com/guide"],
+        }
+        with sqlite3.connect(str(self.database_path)) as connection:
+            connection.execute(
+                """
+                UPDATE tencent_moderation_findings
+                SET analysis_source = 'ai', ai_status = 'completed', ai_analysis_json = ?
+                WHERE id = ?
+                """,
+                (json.dumps(analysis, ensure_ascii=False), row_id),
+            )
+        self.login()
+
+        response = self.client.get(f"/reviews/tencent/{row_id}")
+
+        self.assertIn("外链检查".encode("utf-8"), response.data)
+        self.assertIn("正常资料链接".encode("utf-8"), response.data)
+        self.assertIn(b"https://docs.example.com/guide", response.data)
+        self.assertNotIn(b'href="https://docs.example.com/guide"', response.data)
+
     def test_conflicting_high_risk_allow_can_be_resolved_directly(self):
         row_id = self.insert_tencent_review(title="风险与建议冲突")
         with sqlite3.connect(str(self.database_path)) as connection:

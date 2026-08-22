@@ -1,6 +1,7 @@
 import re
 import unicodedata
 from typing import List, Optional, Tuple
+from urllib.parse import urlsplit
 
 from .config import GuardConfig, SensitiveTermRule
 from .models import (
@@ -15,7 +16,21 @@ from .models import (
 from .normalization import extract_plain_text, normalize_text
 
 
-_URL_RE = re.compile(r"(?:https?://|www\.)[^\s<>()]+", re.IGNORECASE)
+_URL_RE = re.compile(
+    r"""
+    (?:
+        https?://[^\s<>()\[\]{}\"'，。！？；：、]+
+        |www\.[^\s<>()\[\]{}\"'，。！？；：、]+
+        |(?<![@\w])
+          (?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+
+          (?:com|cn|net|org|io|ai|app|cloud|co|me|top|xyz|site|tech|vip|club|shop|store|info|biz|tv|cc|link|live|pro)
+          (?:/[^\s<>()\[\]{}\"'，。！？；：、]+)?
+    )
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+_TRAILING_LINK_PUNCTUATION = ".,!?;:)]}，。！？；：、》」』"
+_PLATFORM_LINK_DOMAINS = ("qq.com",)
 _PHONE_RE = re.compile(r"(?<!\d)1[3-9]\d{9}(?!\d)")
 _EMAIL_RE = re.compile(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", re.IGNORECASE)
 _CONTACT_ID_RE = re.compile(
@@ -110,15 +125,16 @@ class ModerationEngine:
             )
             delete_candidate_hit = delete_candidate_hit or rule.action == "delete_candidate"
 
-        urls = _URL_RE.findall(text)
-        if self.settings.detect_external_links and urls:
+        external_links = extract_external_links(text)
+        if self.settings.detect_external_links and external_links:
+            domain = external_link_domain(external_links[0])
             reasons.append(
                 PolicyReason(
                     code="external_link_detected",
                     category="information_screening",
                     severity="low",
-                    message="内容包含外部链接，需要按所在栏目规则判断是否允许",
-                    evidence=urls[0][:120],
+                    message="检测到外部链接，AI将继续判断链接用途、内容相关性和引流风险",
+                    evidence=f"域名：{domain or '无法识别'}；链接：{external_links[0][:120]}",
                     score=5,
                 )
             )
@@ -163,14 +179,15 @@ class ModerationEngine:
                         score=25,
                     )
                 )
-            if not board.allow_external_links and urls:
+            if not board.allow_external_links and external_links:
+                domain = external_link_domain(external_links[0])
                 reasons.append(
                     PolicyReason(
                         code="external_link_not_allowed",
                         category="board_policy",
                         severity="medium",
                         message=f"“{board.name}”栏目不允许外部链接",
-                        evidence=urls[0][:120],
+                        evidence=f"域名：{domain or '无法识别'}；链接：{external_links[0][:120]}",
                         score=30,
                     )
                 )
@@ -288,7 +305,10 @@ class ModerationEngine:
         cleaned = re.sub(r"[^a-z0-9\u4e00-\u9fff]", "", text, flags=re.IGNORECASE)
         if len(cleaned) < 4:
             return False
-        return any(cleaned == unit * (len(cleaned) // len(unit)) for unit in (cleaned[:1], cleaned[:2]))
+        return any(
+            cleaned == unit * (len(cleaned) // len(unit))
+            for unit in (cleaned[:1], cleaned[:2])
+        )
 
     @staticmethod
     def _is_latin_gibberish(text: str) -> bool:
@@ -363,6 +383,41 @@ class ModerationEngine:
                 seen.add(key)
                 result.append(reason)
         return tuple(result)
+
+
+def extract_external_links(text: str) -> Tuple[str, ...]:
+    """Extract non-QQ links without opening or resolving their destinations."""
+    links: List[str] = []
+    seen = set()
+    for match in _URL_RE.finditer(text or ""):
+        value = match.group(0).strip().rstrip(_TRAILING_LINK_PUNCTUATION)
+        domain = external_link_domain(value)
+        if not value or not domain or _is_platform_domain(domain):
+            continue
+        normalized = value.casefold()
+        if normalized not in seen:
+            links.append(value)
+            seen.add(normalized)
+    return tuple(links)
+
+
+def external_link_domain(value: str) -> str:
+    candidate = str(value or "").strip()
+    if not candidate:
+        return ""
+    if not candidate.casefold().startswith(("http://", "https://")):
+        candidate = "https://" + candidate
+    try:
+        return str(urlsplit(candidate).hostname or "").casefold().strip(".")
+    except ValueError:
+        return ""
+
+
+def _is_platform_domain(domain: str) -> bool:
+    return any(
+        domain == allowed or domain.endswith(f".{allowed}")
+        for allowed in _PLATFORM_LINK_DOMAINS
+    )
 
 
 def duplicate_policy_reason(previous_platform_item_id: str) -> PolicyReason:

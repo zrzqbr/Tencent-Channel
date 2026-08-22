@@ -29,6 +29,13 @@
     </section>
     {% if item.analysis_source != 'ai' %}<section class="analysis-section analysis-status-warning"><h3>AI分析状态</h3><p>{{ item.ai_error|public_ai_error }}</p></section>{% endif %}
     {% if item.ai_analysis.get('summary') %}<section class="analysis-section"><h3>AI文字分析</h3><div class="content-box">{{ item.ai_analysis.summary|plain_ai_text }}</div></section>{% endif %}
+    <section class="analysis-section external-link-section">
+      <h3>外链检查</h3>
+      <strong class="external-link-status external-link-{{ item.external_link_check.status }}">{{ item.external_link_check.label }}</strong>
+      <p>{{ item.external_link_check.summary|plain_ai_text }}</p>
+      {% if item.external_link_check.links %}<div class="external-link-values"><span>检测到的网址</span>{% for link in item.external_link_check.links %}<code>{{ link }}</code>{% endfor %}</div>{% endif %}
+      {% if item.external_link_check.domains %}<p class="external-link-domains">涉及域名：{{ item.external_link_check.domains|join('、') }}</p>{% endif %}
+    </section>
     <section class="analysis-section">
       <h3>图片检查</h3>
       {% if not item.media_urls %}<p>这条帖子没有图片，不需要图片检查。</p>
