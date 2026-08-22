@@ -169,7 +169,7 @@ def create_app(
             latest = status_store.read(job_id)
             if latest is None or latest.get("status") != "running":
                 return latest
-            task_name = "内容同步" if status_store.task_type == "sync" else "AI 巡检"
+            task_name = "内容同步" if status_store.task_type == "sync" else " AI 巡检"
             return status_store.fail(
                 str(latest.get("job_id") or job_id),
                 f"上次{task_name}已中断，请重新点击开始。",
